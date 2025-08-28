@@ -45,6 +45,9 @@
         <button id="sign-out">Logout</button>
       </div>
       <button id="refresh">🔄 Aktualisieren</button>
+      <select id="project-filter" style="background:#0f1622;border:1px solid #223146;border-radius:.5rem;color:var(--text);padding:.5rem .6rem;min-width:220px">
+        <option value="">— Projekt wählen —</option>
+      </select>
     </div>
   </header>
 
@@ -85,6 +88,10 @@
 
     // Layer für Zonen
     const zones = L.featureGroup().addTo(map);
+    // global verfügbar für andere Skripte/Funktionen
+    window.map = map;
+    window.zones = zones;
+    window.zoneLayerById = new Map();
 
     // === 3) Zeichnen/Bearbeiten aktivieren (nur für eingeloggte Nutzer) ===
     const drawControl = new L.Control.Draw({
@@ -161,6 +168,14 @@
         }).addTo(zones);
 
         layer.eachLayer(l => { l._zoneId = row.id; });
+        window.zoneLayerById.set(row.id, layer);
+        layer.bindPopup(zonePopupHtml(row));
+        // WICHTIG: Wenn Popup aufgeht → Artikelliste/Projekte laden
+        layer.on('popupopen', () => {
+          const ev = new CustomEvent('popupopen-for-zone', { detail: { layer, row } });
+          document.dispatchEvent(ev);
+        });
+      });
         layer.bindPopup(zonePopupHtml(row));
         // WICHTIG: Wenn Popup aufgeht → Artikelliste laden
         layer.on('popupopen', () => {
@@ -173,6 +188,16 @@
     function zonePopupHtml(row){
       return `<div>
         <strong>${escapeHtml(row.name || 'Zone')}</strong><br>
+        <small class="hint">Status: ${escapeHtml(row.status || '—')}</small>
+        <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
+        <hr style="border-color:#1d2735">
+        <div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
+          <div class="hint">Projekte in dieser Zone</div>
+          ${currentUser ? `<button class="btn-add-project" data-zone="${row.id}">+ Projekt</button>` : ''}
+        </div>
+        <div id="projects-${row.id}" class="projects" style="margin:.5rem 0"></div>
+      </div>`;
+    }</strong><br>
         <small class="hint">Status: ${escapeHtml(row.status || '—')}</small>
         <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
       </div>`;
@@ -201,6 +226,7 @@
       layer._zoneId = data.id;
       layer.setStyle?.({ color, fillOpacity: 0.3, weight: 2 });
       layer.bindPopup(zonePopupHtml({ id: data.id, name, status, color, created_at: data.created_at }));
+      window.zoneLayerById.set(data.id, layer);
     });
 
     // Bearbeiten → Aktualisieren
@@ -228,15 +254,13 @@
       const { error } = await supabase.from('storage_zones').delete().in('id', ids);
       if (error) return alert('Löschen fehlgeschlagen: ' + error.message);
       alert('Zonen gelöscht.');
+      ids.forEach(id => window.zoneLayerById.delete(id));
     });
 
     // Hilfsfunktion: XSS verhindern
     function escapeHtml(str){
       return String(str).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
     }
-  </script>  <script type="module">
-    // === (unverändert oben) Supabase/Karte/Zonen-Logik ===
-    // ... (alles wie in der vorherigen Version bis inklusive escapeHtml) ...
   </script>
 
   <script type="module">
@@ -278,14 +302,23 @@
 
       // Liste füllen
       await populateItems(row.id, popupEl.querySelector(`#items-${row.id}`));
+      await populateZoneProjects(row.id, popupEl.querySelector(`#projects-${row.id}`));
 
-      // Add-Button
+      // Add-Buttons
       const btnAdd = popupEl.querySelector('.btn-add-item');
       if (btnAdd) btnAdd.addEventListener('click', async () => {
         if (!w.currentUser) return alert('Bitte einloggen.');
         await addItem(row.id);
         await populateItems(row.id, popupEl.querySelector(`#items-${row.id}`));
       });
+      const btnAddProject = popupEl.querySelector('.btn-add-project');
+      if (btnAddProject) btnAddProject.addEventListener('click', async () => {
+        if (!w.currentUser) return alert('Bitte einloggen.');
+        await addProjectToZone(row.id);
+        await populateZoneProjects(row.id, popupEl.querySelector(`#projects-${row.id}`));
+        await w.loadProjects?.();
+      });
+    });
     });
 
     async function populateItems(zoneId, container){
@@ -350,6 +383,94 @@
       const { error: uerr } = await supabase.from('storage_items').update({ name, qty, unit, notes }).eq('id', itemId);
       if (uerr) alert('Update fehlgeschlagen: ' + uerr.message);
     }
+  
+    // === Projekte laden + Filter ===
+    async function loadProjects(){
+      const sel = document.getElementById('project-filter');
+      if (!sel) return;
+      const { data, error } = await supabase.from('projects').select('id,name').order('name');
+      if (error) { console.warn('Projekt-Ladefehler', error); return; }
+      const current = sel.value;
+      sel.innerHTML = '<option value="">— Projekt wählen —</option>' + (data||[]).map(p=>`<option value="${p.id}">${w.escapeHtml(p.name)}</option>`).join('');
+      if (current) sel.value = current;
+    }
+    w.loadProjects = loadProjects;
+
+    document.getElementById('project-filter')?.addEventListener('change', async (e)=>{
+      const projectId = e.target.value;
+      // Reset Styles
+      w.zoneLayerById.forEach((layer)=>{
+        layer.setStyle?.({ weight:2, opacity:1 });
+      });
+      if (!projectId) return;
+      // Zonen für Projekt holen
+      const { data, error } = await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
+      if (error) return alert('Projekt-Suche fehlgeschlagen: ' + error.message);
+      const ids = (data||[]).map(d=>d.zone_id);
+      if (!ids.length) { alert('Für dieses Projekt sind keine Zonen hinterlegt.'); return; }
+      // Markieren + Zoomen
+      const bounds = [];
+      ids.forEach(id=>{
+        const layer = w.zoneLayerById.get(id);
+        if (layer){
+          layer.setStyle?.({ weight:4, opacity:1 });
+          try { bounds.push(layer.getBounds()); } catch {}
+        }
+      });
+      if (bounds.length){
+        try { w.map.fitBounds(bounds.reduce((a,b)=>a.extend(b)), { padding:[40,40] }); } catch {}
+      }
+    });
+
+    // Projekte pro Zone anzeigen & verwalten
+    async function populateZoneProjects(zoneId, container){
+      if (!container) return;
+      container.innerHTML = '<span class="hint">Lade Projekte…</span>';
+      const { data, error } = await supabase
+        .from('zone_projects')
+        .select('id, project:projects(id,name)')
+        .eq('zone_id', zoneId)
+        .order('created_at', { ascending: true });
+      if (error) { container.innerHTML = `<span class="hint">Fehler: ${w.escapeHtml(error.message)}</span>`; return; }
+      if (!data || !data.length) { container.innerHTML = '<span class="hint">Keine Projekte zugeordnet.</span>'; return; }
+      container.innerHTML = data.map(zp=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">
+          <div><strong>${w.escapeHtml(zp.project?.name || 'Projekt')}</strong></div>
+          ${w.currentUser ? `<button class="btn-remove-project" data-id="${zp.id}">Entfernen</button>` : ''}
+        </div>
+      `).join('');
+      if (w.currentUser){
+        container.querySelectorAll('.btn-remove-project').forEach(btn=>btn.addEventListener('click', async ()=>{
+          const id = btn.getAttribute('data-id');
+          const { error } = await supabase.from('zone_projects').delete().eq('id', id);
+          if (error) return alert('Entfernen fehlgeschlagen: ' + error.message);
+          await populateZoneProjects(zoneId, container);
+          await w.loadProjects?.();
+        }));
+      }
+    }
+
+    async function addProjectToZone(zoneId){
+      let name = prompt('Projektname (neu oder bestehend):');
+      if (!name) return;
+      name = name.trim();
+      // prüfen, ob Projekt existiert
+      let { data: existing, error: e1 } = await supabase.from('projects').select('id').ilike('name', name).limit(1);
+      if (e1) return alert('Suche fehlgeschlagen: ' + e1.message);
+      let projectId = existing && existing[0]?.id;
+      if (!projectId){
+        const { data: created, error: e2 } = await supabase.from('projects').insert({ name }).select('id').single();
+        if (e2) return alert('Projekt anlegen fehlgeschlagen: ' + e2.message);
+        projectId = created.id;
+      }
+      // Zuordnung anlegen
+      const { error: e3 } = await supabase.from('zone_projects').insert({ zone_id: zoneId, project_id: projectId });
+      if (e3) return alert('Zuordnung fehlgeschlagen: ' + e3.message);
+      alert('Projekt zugeordnet.');
+    }
+
+    // Beim Start auch Projekte laden
+    loadProjects();
   </script>
 </body>
 </html>
