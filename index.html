@@ -25,11 +25,21 @@
     button { background: #1e2a3d; color: var(--text); border: 1px solid #2b3b55; border-radius: .5rem; padding: .5rem .75rem; cursor: pointer; }
     button:hover { filter: brightness(1.1); }
 
-    #map { height: calc(100vh - 140px); width: 100%; }
+    #map { height: calc(100vh - 160px); width: 100%; }
     .leaflet-container { background: #0a0e13; }
     .legend { position: fixed; right: .75rem; bottom: .75rem; background: var(--panel); border: 1px solid #1d2735; border-radius: .75rem; padding: .5rem .75rem; font-size: .85rem; color: var(--muted); }
     .legend .dot { display:inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .4rem; vertical-align: middle; }
     .hint { color: var(--muted); font-size: .9rem; }
+
+    /* Blaues Aufleuchten */
+    @keyframes glowPulse {
+      0% { filter: drop-shadow(0 0 0 var(--accent)); }
+      50% { filter: drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px var(--accent)); }
+      100% { filter: drop-shadow(0 0 0 var(--accent)); }
+    }
+    .zone-glow path, .zone-glow polygon, .zone-glow .leaflet-interactive {
+      animation: glowPulse 1.2s ease-in-out 2;
+    }
   </style>
 </head>
 <body>
@@ -47,9 +57,16 @@
         <button id="sign-out">Logout</button>
       </div>
       <button id="refresh">🔄 Aktualisieren</button>
-      <select id="project-filter" style="min-width:220px">
-        <option value="">— Projekt wählen —</option>
-      </select>
+
+      <!-- Projektwahl + Suche -->
+      <div class="row" style="gap:.4rem">
+        <select id="project-filter" style="min-width:220px">
+          <option value="">— Projekt wählen —</option>
+        </select>
+        <input id="project-search" type="text" placeholder="Projekt suchen…" style="min-width:180px" />
+        <button id="project-clear" title="Filter zurücksetzen">✖</button>
+      </div>
+
       <label class="row" style="gap:.4rem;align-items:center">
         <input id="sketch-mode" type="checkbox" />
         <span class="hint">Skizzenmodus (gestrichelt)</span>
@@ -93,6 +110,7 @@
     const zones = L.featureGroup().addTo(map);
     const overlays = L.featureGroup().addTo(map); // gestrichelte Skizzen
     const zoneLayerById = new Map();
+    const zoneOrigColorById = new Map(); // Originalfarben merken
 
     // === Zeichnen/Bearbeiten ===
     const drawControl = new L.Control.Draw({
@@ -110,7 +128,12 @@
     const elSignedOut = document.getElementById('signed-out');
     const elUserEmail = document.getElementById('user-email');
     const elRefresh = document.getElementById('refresh');
+
+    // Projekt UI
     const elProjectFilter = document.getElementById('project-filter');
+    const elProjectSearch = document.getElementById('project-search');
+    const elProjectClear = document.getElementById('project-clear');
+    let allProjects = []; // {id,name}
 
     let currentUser = null;
     function updateAuthUI(){
@@ -129,9 +152,18 @@
       alert('Magic Link gesendet!');
     });
     elSignOut.addEventListener('click', async () => { await supabase.auth.signOut(); });
-    elRefresh.addEventListener('click', loadZones);
+    elRefresh.addEventListener('click', () => { loadZones(); loadProjects(); });
+
     supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; updateAuthUI(); });
-    (async () => { const s = await supabase.auth.getSession(); currentUser = s.data?.session?.user ?? null; updateAuthUI(); await loadZones(); await loadProjects(); })();
+    (async () => {
+      const s = await supabase.auth.getSession();
+      currentUser = s.data?.session?.user ?? null;
+      updateAuthUI();
+      await loadZones();
+      await loadProjects();
+      await cleanupOrphanProjects(); // initial aufräumen
+      await loadProjects(); // Liste nach Cleanup aktualisieren
+    })();
 
     // === Helpers ===
     const statusColor = s => s==='frei' ? '#4caf50' : (s==='reserviert' ? '#ff9800' : '#f44336');
@@ -187,15 +219,17 @@
 
     // === Zonen/Skizzen laden ===
     async function loadZones(){
-      zones.clearLayers(); zoneLayerById.clear();
+      zones.clearLayers(); zoneLayerById.clear(); zoneOrigColorById.clear();
       const r = await supabase.from('storage_zones').select('id,name,status,color,geom,created_at').order('created_at',{ascending:true}).limit(1000);
       if (r.error) { console.error(r.error); return alert('Fehler beim Laden: '+r.error.message); }
       (r.data||[]).forEach(row => {
         if (!row.geom) return;
+        const color = row.color || statusColor(row.status);
         const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
-        const layer = L.geoJSON(gj,{style:{color:row.color||statusColor(row.status),weight:2,fillOpacity:0.3}}).addTo(zones);
+        const layer = L.geoJSON(gj,{style:{color,weight:2,fillOpacity:0.3}}).addTo(zones);
         layer.eachLayer(l => l._zoneId=row.id);
         zoneLayerById.set(row.id, layer);
+        zoneOrigColorById.set(row.id, color);
         layer.bindPopup(zonePopupHtml(row));
         layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row}})));
       });
@@ -283,6 +317,7 @@
               const l = L.geoJSON(gj, { style:{ color, weight:2, fillOpacity:0.3 } }).addTo(zones);
               l.eachLayer(x => x._zoneId=row.id);
               zoneLayerById.set(row.id, l);
+              zoneOrigColorById.set(row.id, color);
               l.bindPopup(zonePopupHtml({ id:row.id, name:row.name, status, color, created_at:row.created_at }));
               l.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer:l,row:{ id:row.id, name:row.name, status, color, created_at:row.created_at }}})));
             });
@@ -305,6 +340,7 @@
       layer.bindPopup(zonePopupHtml({ id:r2.data.id, name, status, color, created_at:r2.data.created_at }));
       layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row:{ id:r2.data.id, name, status, color, created_at:r2.data.created_at }}})));
       zoneLayerById.set(r2.data.id, layer);
+      zoneOrigColorById.set(r2.data.id, color);
       await loadProjects();
     });
 
@@ -327,7 +363,9 @@
       const r = await supabase.from('storage_zones').delete().in('id', ids);
       if (r.error) return alert('Löschen fehlgeschlagen: ' + r.error.message);
       alert('Zonen gelöscht.');
-      ids.forEach(id => zoneLayerById.delete(id));
+      ids.forEach(id => { zoneLayerById.delete(id); zoneOrigColorById.delete(id); });
+      await cleanupOrphanProjects();
+      await loadProjects();
     });
 
     // === Items (Artikel) ===
@@ -410,22 +448,34 @@
       const sel = elProjectFilter; if (!sel) return;
       const r = await supabase.from('projects').select('id,name').order('name');
       if (r.error){ console.warn('Projekt-Ladefehler', r.error); return; }
-      const current = sel.value;
-      sel.innerHTML = '<option value="">— Projekt wählen —</option>' + (r.data||[]).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-      if (current) sel.value = current;
+      allProjects = (r.data||[]).map(p => ({id:p.id, name:p.name}));
+      rebuildProjectOptions(); // Dropdown aus allProjects befüllen (mit evtl. aktivem Suchtext)
     }
+
+    function rebuildProjectOptions(){
+      const sel = elProjectFilter;
+      const q = (elProjectSearch.value || '').toLowerCase().trim();
+      const filtered = !q ? allProjects : allProjects.filter(p => p.name.toLowerCase().includes(q));
+      const current = sel.value;
+      sel.innerHTML = '<option value="">— Projekt wählen —</option>' + filtered.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+      // Falls aktuelle Auswahl nicht mehr sichtbar ist, zurücksetzen
+      if (!filtered.some(p => String(p.id)===String(current))) sel.value = '';
+      else sel.value = current;
+    }
+
+    elProjectSearch.addEventListener('input', rebuildProjectOptions);
+    elProjectClear.addEventListener('click', () => {
+      elProjectSearch.value = '';
+      elProjectFilter.value = '';
+      highlightNone();
+      rebuildProjectOptions();
+    });
+
     elProjectFilter.addEventListener('change', async e => {
       const projectId = e.target.value;
-      zoneLayerById.forEach(layer => layer.setStyle?.({ weight:2, opacity:1 }));
-      if (!projectId) return;
-      const r = await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
-      if (r.error) return alert('Projekt-Suche fehlgeschlagen: ' + r.error.message);
-      const ids = (r.data||[]).map(d => d.zone_id);
-      if (!ids.length) return alert('Für dieses Projekt sind keine Zonen hinterlegt.');
-      let bounds = null;
-      ids.forEach(id => { const l = zoneLayerById.get(id); if (l){ l.setStyle?.({ weight:4, opacity:1 }); try{ const b=l.getBounds(); bounds=bounds?bounds.extend(b):b; }catch{} }});
-      if (bounds) try{ map.fitBounds(bounds, { padding:[40,40] }); }catch{}
+      await highlightProject(projectId);
     });
+
     async function populateZoneProjects(zoneId, container){
       if (!container) return;
       container.innerHTML = '<span class="hint">Lade Projekte…</span>';
@@ -444,11 +494,13 @@
           const id = b.getAttribute('data-id');
           const d = await supabase.from('zone_projects').delete().eq('id', id);
           if (d.error) return alert('Entfernen fehlgeschlagen: ' + d.error.message);
+          await cleanupOrphanProjects();  // nach Entfernen aufräumen
           await populateZoneProjects(zoneId, container);
           await loadProjects();
         }));
       }
     }
+
     async function addProjectToZone(zoneId){
       const chk = await supabase.from('storage_zones').select('id').eq('id', zoneId).maybeSingle();
       if (chk.error) return alert('Zone prüfen fehlgeschlagen: ' + chk.error.message);
@@ -465,6 +517,64 @@
       const link = await supabase.from('zone_projects').insert({ zone_id: zoneId, project_id: projectId });
       if (link.error) return alert('Zuordnung fehlgeschlagen: ' + link.error.message);
       alert('Projekt zugeordnet.');
+      await loadProjects();
+    }
+
+    // === Hervorheben der Zonen eines Projekts ===
+    async function highlightProject(projectId){
+      // Alle Zonen zurücksetzen
+      zoneLayerById.forEach((layer, id) => {
+        const orig = zoneOrigColorById.get(id) || '#7cc4ff';
+        layer.setStyle?.({ color: orig, weight: 2, opacity: 1 });
+        // Klasse für Glow entfernen
+        try { layer.getLayers?.().forEach(s => s._path?.classList?.remove('zone-glow')); } catch {}
+      });
+      if (!projectId){
+        return;
+      }
+      const r = await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
+      if (r.error){ alert('Projekt-Suche fehlgeschlagen: ' + r.error.message); return; }
+      const ids = (r.data||[]).map(d => d.zone_id);
+      if (!ids.length){ alert('Für dieses Projekt sind keine Zonen hinterlegt.'); return; }
+
+      // Stil blau + Glow + Zoom
+      let bounds = null;
+      ids.forEach(id => {
+        const l = zoneLayerById.get(id);
+        if (!l) return;
+        l.setStyle?.({ color: '#7cc4ff', weight: 4, opacity: 1, className: 'zone-glow' });
+        try {
+          // Glow-Klasse auf Pfade anwenden
+          l.getLayers?.().forEach(s => s._path?.classList?.add('zone-glow'));
+          l.bringToFront?.();
+          const b = l.getBounds?.();
+          bounds = b ? (bounds ? bounds.extend(b) : b) : bounds;
+        } catch {}
+      });
+      if (bounds) try{ map.fitBounds(bounds, { padding:[40,40] }); }catch{}
+    }
+
+    function highlightNone(){
+      zoneLayerById.forEach((layer, id) => {
+        const orig = zoneOrigColorById.get(id) || '#7cc4ff';
+        layer.setStyle?.({ color: orig, weight: 2, opacity: 1 });
+        try { layer.getLayers?.().forEach(s => s._path?.classList?.remove('zone-glow')); } catch {}
+      });
+    }
+
+    // === Orphan-Projects entfernen (keine Zone verknüpft) ===
+    async function cleanupOrphanProjects(){
+      // hole alle Projekte und alle Verknüpfungen, lösche Projekte ohne Verknüpfung
+      const proj = await supabase.from('projects').select('id');
+      if (proj.error){ console.warn('Cleanup/Projects:', proj.error); return; }
+      const links = await supabase.from('zone_projects').select('project_id');
+      if (links.error){ console.warn('Cleanup/Links:', links.error); return; }
+      const linked = new Set((links.data||[]).map(x => x.project_id));
+      const orphans = (proj.data||[]).map(p => p.id).filter(id => !linked.has(id));
+      if (orphans.length){
+        const del = await supabase.from('projects').delete().in('id', orphans);
+        if (del.error){ console.warn('Cleanup/Delete:', del.error); }
+      }
     }
   </script>
 </body>
