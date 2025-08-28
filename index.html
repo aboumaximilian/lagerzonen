@@ -4,13 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lagerzonen — Boschstraße 60a, 50171 Kerpen</title>
+
   <!-- Leaflet & Leaflet.draw -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
   <!-- Turf.js für Polygon-Teilung -->
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+  <!-- Path Transform (Verschieben / Drehen für Polylinien & Polygone) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-path-transform@1.8.0/dist/L.Path.Transform.css" />
+  <script src="https://unpkg.com/leaflet-path-transform@1.8.0/dist/L.Path.Transform.js"></script>
+
   <style>
     :root { --bg:#0b0f14; --panel:#121821; --text:#f3f6fb; --muted:#9fb0c0; --accent:#7cc4ff; }
     * { box-sizing: border-box; }
@@ -39,6 +46,14 @@
     }
     .zone-glow path, .zone-glow polygon, .zone-glow .leaflet-interactive {
       animation: glowPulse 1.2s ease-in-out 2;
+    }
+
+    /* Griffe vom Transform-Plugin etwas deutlicher */
+    .leaflet-transform-resizable .leaflet-transform-handle {
+      width: 10px; height: 10px; border-radius: 3px;
+    }
+    .leaflet-transform-rotatable .leaflet-transform-rotate {
+      width: 12px; height: 12px; border-radius: 50%;
     }
   </style>
 </head>
@@ -199,22 +214,29 @@
           const lat1 = sw.lat + r*latStep, lat2 = sw.lat + (r+1)*latStep;
           const lng1 = sw.lng + c*lngStep, lng2 = sw.lng + (c+1)*lngStep;
 
-          // Zelle als Turf-Polygon (lng,lat!)
           const cellPoly = turf.polygon([[
             [lng1, lat1],[lng2, lat1],[lng2, lat2],[lng1, lat2],[lng1, lat1]
           ]]);
 
-          // Schnittmenge mit ursprünglichem Polygon
           const clipped = turf.intersect(polyFeature, cellPoly);
           if (!clipped) continue;
 
-          // Kleinstfragmente (z.B. < 1 m²) verwerfen
           try { if (turf.area(clipped) < 1) continue; } catch(e){}
 
           cells.push({ r:r+1, c:c+1, geojson: clipped });
         }
       }
       return cells;
+    }
+
+    // === Utility: erstes Shape aus einem GeoJSON-Layer holen ===
+    function firstShapeLayer(geojsonLayer){
+      if (!geojsonLayer) return null;
+      if (geojsonLayer.getLayers) {
+        const arr = geojsonLayer.getLayers();
+        return arr && arr.length ? arr[0] : null;
+      }
+      return geojsonLayer;
     }
 
     // === Zonen/Skizzen laden ===
@@ -249,11 +271,15 @@
 
     function zonePopupHtml(row){
       const addBtn = currentUser ? `<button class="btn-add-project" data-zone="${row.id}">+ Projekt</button>` : '';
+      const transformBtn = currentUser ? `<button class="btn-transform" data-zone="${row.id}" title="Zone verschieben / drehen">Drehen/Verschieben</button>` : '';
       return `
         <div>
           <strong>${escapeHtml(row.name||'Zone')}</strong><br>
           <small class="hint">Status: ${escapeHtml(row.status||'—')}</small>
           <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
+          <div class="row" style="margin:.4rem 0; gap:.4rem;">
+            ${transformBtn}
+          </div>
           <hr style="border-color:#1d2735">
           <div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
             <div class="hint">Projekte in dieser Zone</div>${addBtn}
@@ -265,6 +291,39 @@
           </div>
           <div id="items-${row.id}" class="items" style="margin-top:.5rem"></div>
         </div>`;
+    }
+
+    // === Transform (verschieben/drehen) toggeln + speichern ===
+    function enableTransformForZoneId(zoneId){
+      const group = zoneLayerById.get(zoneId);
+      if (!group) return null;
+      const shape = firstShapeLayer(group);
+      if (!shape) return null;
+
+      // schon aktiv? -> ausschalten
+      if (shape.transform && shape.transform._enabled) {
+        shape.transform.disable();
+        return null;
+      }
+
+      // aktivieren (Rotation an, Skalierung aus)
+      if (!shape.transform) {
+        L.extend(shape, L.Path.Transform.prototype); // falls nötig
+        shape.transform = new L.Path.Transform(shape);
+      }
+      shape.transform.enable({ rotation: true, scaling: false, draggable: true });
+
+      // Beim Ende der Manipulation: Speichern
+      const onEnd = async () => {
+        shape.off('transformend', onEnd);
+        const gj = group.toGeoJSON(); // ganze Gruppe (1 Feature) nach der Transformation
+        const r = await supabase.from('storage_zones').update({ geom: gj }).eq('id', zoneId);
+        if (r.error) alert('Speichern der Transformation fehlgeschlagen: ' + r.error.message);
+        else alert('Position/Ausrichtung gespeichert.');
+      };
+      shape.on('transformend', onEnd);
+
+      return shape;
     }
 
     // === Zeichnen → Speichern (inkl. Grid-Aufteilung) ===
@@ -344,7 +403,7 @@
       await loadProjects();
     });
 
-    // Bearbeiten
+    // Bearbeiten (Leaflet.draw) – klassische Vertex-Änderungen
     map.on(L.Draw.Event.EDITED, async e => {
       const updates = [];
       e.layers.eachLayer(l => { if (l._zoneId) updates.push({ id:l._zoneId, geom:l.toGeoJSON() }); });
@@ -372,8 +431,19 @@
     document.addEventListener('popupopen-for-zone', async ev => {
       const { layer, row } = ev.detail;
       const el = layer.getPopup()?.getElement(); if (!el) return;
+
+      // Transform-Button verdrahten
+      el.querySelector('.btn-transform')?.addEventListener('click', async () => {
+        if (!currentUser) return alert('Bitte einloggen.');
+        const shape = enableTransformForZoneId(row.id);
+        if (!shape) return; // wurde ausgeschaltet
+        // beim Schließen des Popups Transform aus
+        layer.once('popupclose', () => { try{ shape.transform.disable(); }catch{} });
+      });
+
       await populateItems(row.id, el.querySelector('#items-'+row.id));
       await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id));
+
       el.querySelector('.btn-add-item')?.addEventListener('click', async () => {
         if (!currentUser) return alert('Bitte einloggen.');
         await addItem(row.id);
@@ -458,7 +528,6 @@
       const filtered = !q ? allProjects : allProjects.filter(p => p.name.toLowerCase().includes(q));
       const current = sel.value;
       sel.innerHTML = '<option value="">— Projekt wählen —</option>' + filtered.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-      // Falls aktuelle Auswahl nicht mehr sichtbar ist, zurücksetzen
       if (!filtered.some(p => String(p.id)===String(current))) sel.value = '';
       else sel.value = current;
     }
@@ -522,29 +591,24 @@
 
     // === Hervorheben der Zonen eines Projekts ===
     async function highlightProject(projectId){
-      // Alle Zonen zurücksetzen
       zoneLayerById.forEach((layer, id) => {
         const orig = zoneOrigColorById.get(id) || '#7cc4ff';
         layer.setStyle?.({ color: orig, weight: 2, opacity: 1 });
-        // Klasse für Glow entfernen
         try { layer.getLayers?.().forEach(s => s._path?.classList?.remove('zone-glow')); } catch {}
       });
-      if (!projectId){
-        return;
-      }
+      if (!projectId) return;
+
       const r = await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
       if (r.error){ alert('Projekt-Suche fehlgeschlagen: ' + r.error.message); return; }
       const ids = (r.data||[]).map(d => d.zone_id);
       if (!ids.length){ alert('Für dieses Projekt sind keine Zonen hinterlegt.'); return; }
 
-      // Stil blau + Glow + Zoom
       let bounds = null;
       ids.forEach(id => {
         const l = zoneLayerById.get(id);
         if (!l) return;
         l.setStyle?.({ color: '#7cc4ff', weight: 4, opacity: 1, className: 'zone-glow' });
         try {
-          // Glow-Klasse auf Pfade anwenden
           l.getLayers?.().forEach(s => s._path?.classList?.add('zone-glow'));
           l.bringToFront?.();
           const b = l.getBounds?.();
@@ -564,7 +628,6 @@
 
     // === Orphan-Projects entfernen (keine Zone verknüpft) ===
     async function cleanupOrphanProjects(){
-      // hole alle Projekte und alle Verknüpfungen, lösche Projekte ohne Verknüpfung
       const proj = await supabase.from('projects').select('id');
       if (proj.error){ console.warn('Cleanup/Projects:', proj.error); return; }
       const links = await supabase.from('zone_projects').select('project_id');
