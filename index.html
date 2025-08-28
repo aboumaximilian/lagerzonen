@@ -29,7 +29,6 @@
     *{ box-sizing:border-box; }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu; background:var(--bg); color:var(--text); }
 
-    /* Minimal Header */
     header{
       position:sticky; top:0; z-index:1000; background:var(--panel); border-bottom:1px solid var(--line);
       padding:.5rem .75rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;
@@ -51,9 +50,11 @@
     button.icon{ width:2.1rem; height:2.1rem; display:inline-grid; place-items:center; padding:0; }
 
     #map{ height:calc(100vh - 160px); width:100%; }
+    /* Schwarze-Karte vermeiden: GPU-Hints */
     .leaflet-container{ background:#0a0e13; will-change: transform; }
-    .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; will-change: transform; }
+    .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; will-change: transform; transform: translateZ(0); }
     .leaflet-tile{ image-rendering:-webkit-optimize-contrast; }
+
     .legend{
       position:fixed; right:.6rem; bottom:.6rem; background:var(--panel); border:1px solid var(--line);
       border-radius:var(--radius); padding:.4rem .55rem; font-size:.82rem; color:var(--muted); z-index:1100;
@@ -61,13 +62,11 @@
     .legend .dot{ display:inline-block; width:.75rem; height:.75rem; border-radius:2px; margin-right:.35rem; vertical-align:middle; }
     .hint{ color:var(--muted); font-size:.85rem; }
 
-    /* Blaues Aufleuchten */
     @keyframes glowPulse{ 0%{filter:drop-shadow(0 0 0 var(--accent));}
       50%{filter:drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px var(--accent));}
       100%{filter:drop-shadow(0 0 0 var(--accent));} }
     .zone-glow path,.zone-glow polygon,.zone-glow .leaflet-interactive{ animation:glowPulse 1.2s ease-in-out 2; }
 
-    /* Responsive Popup */
     .zone-popup .leaflet-popup-content{ max-height:60vh; overflow:auto; }
     .zone-popup{ max-width:90vw !important; }
     @media (min-width:800px){ .zone-popup{ max-width:420px !important; } }
@@ -85,6 +84,13 @@
     #admin-panel{ display:none; margin-top:.75rem; border-top:1px solid var(--line); padding-top:.75rem; }
     #users-table th, #users-table td{ border-bottom:1px solid var(--line); padding:.35rem .4rem; text-align:left; }
     #users-table{ width:100%; border-collapse:collapse; font-size:.9rem; }
+
+    /* Modale */
+    .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:2000; }
+    .modal{ background:var(--panel); border:1px solid var(--line); border-radius:.8rem; padding:1rem; width:min(1100px,96vw); max-height:80vh; overflow:auto; }
+    .table{ width:100%; border-collapse:collapse; }
+    .table th,.table td{ border-bottom:1px solid var(--line); padding:.5rem; text-align:left; font-size:.95rem; }
+    .clickable{ cursor:pointer; }
   </style>
 </head>
 <body>
@@ -107,8 +113,9 @@
         <input id="sketch-mode" type="checkbox" /><span class="hint">Skizze</span>
       </label>
       <label class="row" title="Karte in Schwarz/Weiß">
-        <input id="bw-toggle" type="checkbox" /><span class="hint">S/W Karte</span>
+        <input id="bw-toggle" type="checkbox" checked /><span class="hint">S/W Karte</span>
       </label>
+      <button id="btn-zones-overview" class="ghost" title="Zonen-Übersicht">🗂️</button>
     </div>
 
     <div class="sp"></div>
@@ -130,7 +137,7 @@
     </div>
   </header>
 
-  <div id="map"></div>
+  <div id="map" class="grayscale"></div>
 
   <div class="legend">
     <div><span class="dot" style="background:#4caf50"></span> frei</div>
@@ -139,13 +146,24 @@
   </div>
 
   <!-- Artikel-Liste Modal -->
-  <div id="items-modal" class="modal-backdrop" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:2000;">
-    <div class="modal" style="background:var(--panel); border:1px solid var(--line); border-radius:.8rem; padding:1rem; width:min(980px,96vw); max-height:80vh; overflow:auto;">
+  <div id="items-modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal">
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
         <h3 style="margin:0">📋 Artikel-Übersicht</h3>
         <button id="items-modal-close">Schließen</button>
       </div>
       <div id="items-table-wrap" class="hint">Lade…</div>
+    </div>
+  </div>
+
+  <!-- Zonen-Übersicht Modal -->
+  <div id="zones-modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
+        <h3 style="margin:0">🗂️ Zonen-Übersicht</h3>
+        <button id="zones-modal-close">Schließen</button>
+      </div>
+      <div id="zones-table-wrap" class="hint">Lade…</div>
     </div>
   </div>
 
@@ -169,7 +187,7 @@
           </select>
           <button id="btn-add-user">Hinzufügen</button>
         </div>
-        <table id="users-table">
+        <table id="users-table" class="table">
           <thead><tr><th>E-Mail</th><th>Rolle</th><th>Aktion</th></tr></thead>
           <tbody id="users-body"><tr><td colspan="3" class="hint">Lade…</td></tr></tbody>
         </table>
@@ -201,22 +219,25 @@
     L.control.layers({ 'OSM': osm, 'Satellit': esriSat }, {}, { position: 'topleft' }).addTo(map);
     L.rectangle(BOUNDS, { color: '#7cc4ff', weight: 1, fillOpacity: 0.03 }).addTo(map);
 
-    // Schwarz/Weiß
+    // — Schwarz/weiß Schalter (default aktiv)
     const mapEl = document.getElementById('map');
-    document.getElementById('bw-toggle').addEventListener('change', e => {
-      if (e.target.checked) mapEl.classList.add('grayscale'); else mapEl.classList.remove('grayscale');
-      setTimeout(() => map.invalidateSize(), 60);
-    });
+    const bwToggle = document.getElementById('bw-toggle');
+    const setBW = on => { mapEl.classList.toggle('grayscale', !!on); requestAnimationFrame(() => map.invalidateSize()); };
+    setBW(true);
+    bwToggle.addEventListener('change', e => setBW(e.target.checked));
 
-    // Schwarz-Bild Fixe (Resize/Layer/Tiles)
+    // — Schwarze-Karte-Fixes
     const invalidate = () => setTimeout(() => map.invalidateSize(), 120);
     setTimeout(invalidate, 200);
     window.addEventListener('resize', invalidate);
     map.on('baselayerchange', invalidate);
     map.on('layeradd', invalidate);
     map.on('tileerror', invalidate);
+    map.on('zoomend', invalidate);
     map.whenReady(invalidate);
     document.addEventListener('visibilitychange', invalidate);
+    // Beobachte Map-Container-Größe (z.B. mobiles Tastatur-Resize)
+    new ResizeObserver(invalidate).observe(mapEl);
 
     // === Layer-Gruppen
     const zones = L.featureGroup().addTo(map);
@@ -253,6 +274,10 @@
     const elItemsTableWrap = document.getElementById('items-table-wrap');
     const elBtnUploadCsv = document.getElementById('btn-upload-csv');
     const elCsvInput = document.getElementById('csv-input');
+
+    const elZonesModal = document.getElementById('zones-modal');
+    const elZonesClose = document.getElementById('zones-modal-close');
+    const elZonesTableWrap = document.getElementById('zones-table-wrap');
 
     // Login Overlay
     const overlay = document.getElementById('login-overlay');
@@ -293,11 +318,9 @@
       elRoleBadge.textContent = authed ? `(${myRole})` : '';
       elBtnUsers.style.display = perms().canManageUsers ? '' : 'none';
       setDrawingEnabled(perms().canDraw);
-      // CSV / Katalog nur zeigen, wenn Artikelnummer existiert
       document.getElementById('btn-upload-csv').style.display = HAS_ARTICLE_NUMBER ? '' : 'none';
     }
 
-    // Magic-Link im Header
     elSignIn.addEventListener('click', async () => {
       const email = (elEmail.value || '').trim();
       if (!email) return alert('Bitte E-Mail eingeben');
@@ -309,10 +332,8 @@
 
     elRefresh.addEventListener('click', () => { loadZones(); loadProjects(); });
 
-    // Auth-Events
     supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; handlePostLogin(); });
 
-    // Initial
     (async () => {
       const s = await supabase.auth.getSession();
       currentUser = s.data?.session?.user ?? null;
@@ -334,7 +355,6 @@
       updateAuthUI();
       if (myRole==='admin') await loadAllowedUsers();
     }
-
     async function getMyRole(){
       if (!currentUser?.email) return null;
       const r = await supabase.from('allowed_emails').select('role').eq('email', currentUser.email.toLowerCase()).maybeSingle();
@@ -420,7 +440,6 @@
       return cells;
     }
 
-    // Helpers für GeoJSON ↔ bestehende Layer aktualisieren
     function latlngsFromGeoJSON(gj){
       const tmp = [];
       L.geoJSON(gj, { onEachFeature: (f, l) => { if (l.getLatLngs) tmp.push(l.getLatLngs()); }});
@@ -446,7 +465,6 @@
         zoneLayerById.set(row.id, layer);
         zoneOrigColorById.set(row.id, color);
 
-        // Popup mit Bearbeitungsleiste (Bewegen/Drehen)
         layer.bindPopup(zonePopupHtml(row), {
           className:'zone-popup',
           maxWidth:(window.innerWidth<800?Math.min(420,Math.floor(window.innerWidth*0.9)):420),
@@ -477,22 +495,23 @@
           <button class="btn-move"   data-zone="${row.id}" title="Bewegen (ziehen)">Bewegen</button>
           <button class="btn-rotate" data-zone="${row.id}" title="Drehen per Slider">Drehen</button>
         </div>` : '';
+      // Status-Dropdown immer sichtbar (lesen & ändern wenn Admin)
+      const statusSel = `
+        <div class="row" style="gap:.4rem; margin-top:.25rem">
+          <label class="hint">Status:</label>
+          <select class="zone-status" ${perms().canDraw?'':'disabled'}>
+            ${['frei','reserviert','belegt'].map(s=>`<option value="${s}" ${s===(row.status||'frei')?'selected':''}>${s}</option>`).join('')}
+          </select>
+          ${perms().canDraw?'<button class="btn-save-status">Speichern</button>':''}
+        </div>`;
       const addBtn = canP ? `<button class="btn-add-project" data-zone="${row.id}" title="Projekt zuordnen">+ Projekt</button>` : '';
       const addItem = canI ? `<button class="btn-add-item" data-zone="${row.id}" title="Artikel hinzufügen">+ Artikel</button>` : '';
       return `
         <div>
-          <strong>${escapeHtml(row.name||'Zone')}</strong><br>
-          <small class="hint">Status: ${escapeHtml(row.status||'—')}</small>
+          <strong>${escapeHtml(row.name||'Zone')}</strong>
           <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
+          ${statusSel}
           ${editBar}
-          <div class="rotate-ui" style="display:none; margin:.25rem 0 .4rem 0;">
-            <div class="row" style="gap:.4rem">
-              <input type="range" min="-180" max="180" value="0" step="1" class="rot-slider" style="width:160px">
-              <span class="hint rot-value">0°</span>
-              <button class="rot-save">Speichern</button>
-              <button class="rot-cancel">Abbrechen</button>
-            </div>
-          </div>
           <hr style="border-color:#1b2737">
           <div class="row" style="justify-content:space-between;">
             <div class="hint">Projekte in dieser Zone</div>${addBtn}
@@ -514,32 +533,40 @@
         }catch{}
       });
     }
-
     function startRotateUI(group, zoneId, container){
-      const ui = container.querySelector('.rotate-ui'); if (!ui) return;
-      ui.style.display = 'block';
-      const slider = ui.querySelector('.rot-slider');
-      const label  = ui.querySelector('.rot-value');
+      const base = group.toGeoJSON();
+      const ui = container.querySelector('.rotate-ui');
+      if (ui) ui.remove();
+      const wrap = document.createElement('div');
+      wrap.className = 'rotate-ui';
+      wrap.style.margin = '.25rem 0 .4rem 0';
+      wrap.innerHTML = `
+        <div class="row" style="gap:.4rem">
+          <input type="range" min="-180" max="180" value="0" step="1" class="rot-slider" style="width:160px">
+          <span class="hint rot-value">0°</span>
+          <button class="rot-save">Speichern</button>
+          <button class="rot-cancel">Abbrechen</button>
+        </div>`;
+      container.querySelector('div').prepend(wrap);
+      const slider = wrap.querySelector('.rot-slider');
+      const label  = wrap.querySelector('.rot-value');
 
-      const base = group.toGeoJSON(); // unverändert
       let currentAngle = 0;
-
       const applyAngle = (deg) => {
         currentAngle = deg;
         label.textContent = `${deg}°`;
         const rotated = turf.transformRotate(base, deg, { mutate:false });
         applyGeoJSONInPlace(group, rotated);
       };
-
       slider.oninput = () => applyAngle(Number(slider.value));
-      ui.querySelector('.rot-cancel').onclick = () => {
-        applyGeoJSONInPlace(group, base); ui.style.display='none';
+      wrap.querySelector('.rot-cancel').onclick = () => {
+        applyGeoJSONInPlace(group, base); wrap.remove();
       };
-      ui.querySelector('.rot-save').onclick = async () => {
+      wrap.querySelector('.rot-save').onclick = async () => {
         const rotated = turf.transformRotate(base, currentAngle, { mutate:false });
         const r = await supabase.from('storage_zones').update({ geom: rotated }).eq('id', zoneId);
         if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
-        ui.style.display='none';
+        wrap.remove();
       };
     }
 
@@ -633,6 +660,19 @@
       const { layer, row } = ev.detail;
       const el = layer.getPopup()?.getElement(); if(!el) return;
 
+      // Status ändern
+      const sel = el.querySelector('.zone-status');
+      const btnSave = el.querySelector('.btn-save-status');
+      if (btnSave) btnSave.addEventListener('click', async () => {
+        const newStatus = sel.value;
+        const newColor = statusColor(newStatus);
+        const u = await supabase.from('storage_zones').update({ status:newStatus, color:newColor }).eq('id', row.id);
+        if (u.error) return alert('Status ändern fehlgeschlagen: '+u.error.message);
+        layer.setStyle?.({ color:newColor });
+        zoneOrigColorById.set(row.id, newColor);
+        alert('Status gespeichert.');
+      });
+
       // Bewegen (drag)
       el.querySelector('.btn-move')?.addEventListener('click', async () => {
         if (!perms().canDraw) return alert('Nur Admins dürfen Zonen bewegen.');
@@ -669,23 +709,25 @@
       });
     });
 
-    // === Items (Artikel)
-    async function detectItemsSchema(){
-      // Test-Select, ob article_number existiert
-      const t = await supabase.from('storage_items').select('id,article_number').limit(1);
-      if (t.error && /column .* does not exist/i.test(t.error.message)) {
-        HAS_ARTICLE_NUMBER = false;
-      }
+    // === Items (Artikel) – schema-robust
+    function isMissingArticleColumnError(err){
+      return !!err && /article[_ ]?number.*(does not exist|schema cache)/i.test(err.message||'');
     }
-
+    async function detectItemsSchema(){
+      const t = await supabase.from('storage_items').select('id,article_number').limit(1);
+      if (t.error && isMissingArticleColumnError(t.error)) HAS_ARTICLE_NUMBER = false;
+    }
     async function selectItemsForZone(zoneId){
       const cols = HAS_ARTICLE_NUMBER ? 'id,article_number,name,qty,unit,notes,created_at' : 'id,name,qty,unit,notes,created_at';
       const r = await supabase.from('storage_items').select(cols).eq('zone_id', zoneId).order('created_at',{ascending:true});
+      if (r.error && isMissingArticleColumnError(r.error)){ HAS_ARTICLE_NUMBER=false; return selectItemsForZone(zoneId); }
       return r;
     }
     async function selectAllItems(){
-      const cols = HAS_ARTICLE_NUMBER ? 'article_number,name,qty,unit' : 'name,qty,unit';
-      return await supabase.from('storage_items').select(cols);
+      const cols = HAS_ARTICLE_NUMBER ? 'article_number,name,qty,unit,zone_id' : 'name,qty,unit,zone_id';
+      const r = await supabase.from('storage_items').select(cols);
+      if (r.error && isMissingArticleColumnError(r.error)){ HAS_ARTICLE_NUMBER=false; return selectAllItems(); }
+      return r;
     }
 
     async function populateItems(zoneId, container){
@@ -738,7 +780,10 @@
       const notes=prompt('Notizen (optional):')||null;
       const payload = HAS_ARTICLE_NUMBER ? {zone_id:zoneId,article_number:article_number||null,name,qty,unit,notes}
                                          : {zone_id:zoneId,name,qty,unit,notes};
-      const r=await supabase.from('storage_items').insert(payload);
+      let r=await supabase.from('storage_items').insert(payload);
+      if(r.error && isMissingArticleColumnError(r.error)){
+        HAS_ARTICLE_NUMBER=false; r=await supabase.from('storage_items').insert({zone_id:zoneId,name,qty,unit,notes});
+      }
       if(r.error) alert('Speichern fehlgeschlagen: '+r.error.message);
     }
     async function editItem(itemId){
@@ -758,9 +803,13 @@
       const qty=qtyStr!==''?Number(qtyStr):null;
       let unit=prompt('Einheit:', d.unit||'')??d.unit;
       let notes=prompt('Notizen:', d.notes||'')??d.notes;
-      const payload = HAS_ARTICLE_NUMBER ? {article_number:article_number||null,name,qty,unit,notes}
-                                         : {name,qty,unit,notes};
-      const u=await supabase.from('storage_items').update(payload).eq('id', itemId);
+      let payload = HAS_ARTICLE_NUMBER ? {article_number:article_number||null,name,qty,unit,notes}
+                                       : {name,qty,unit,notes};
+      let u=await supabase.from('storage_items').update(payload).eq('id', itemId);
+      if(u.error && isMissingArticleColumnError(u.error)){
+        HAS_ARTICLE_NUMBER=false; payload = {name,qty,unit,notes};
+        u=await supabase.from('storage_items').update(payload).eq('id', itemId);
+      }
       if(u.error) alert('Update fehlgeschlagen: '+u.error.message);
     }
 
@@ -865,7 +914,10 @@
     }
 
     // === CSV Upload / Artikelübersicht
-    document.getElementById('btn-upload-csv').addEventListener('click', ()=>{ if(!perms().canAddItems||!HAS_ARTICLE_NUMBER) return alert('CSV-Import nur mit Artikelnummer aktiv.'); elCsvInput.value=''; elCsvInput.click(); });
+    document.getElementById('btn-upload-csv').addEventListener('click', ()=>{
+      if(!perms().canAddItems || !HAS_ARTICLE_NUMBER) return alert('CSV-Import nur mit Artikelnummer aktiv.');
+      elCsvInput.value=''; elCsvInput.click();
+    });
     elCsvInput.addEventListener('change', async ()=>{
       if(!elCsvInput.files?.length) return; const file=elCsvInput.files[0];
       Papa.parse(file,{ header:true, skipEmptyLines:true, complete: async (results)=>{
@@ -908,28 +960,90 @@
       }
       const rows=Array.from(agg.values()).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
       elItemsTableWrap.innerHTML=`
-        <table style="width:100%; border-collapse:collapse; font-size:.95rem">
+        <table class="table">
           <thead>
             <tr>
-              ${HAS_ARTICLE_NUMBER?'<th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Artikelnummer</th>':''}
-              <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Name</th>
-              <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Hersteller</th>
-              <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Gesamtmenge</th>
-              <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Einheit(en)</th>
+              ${HAS_ARTICLE_NUMBER?'<th>Artikelnummer</th>':''}
+              <th>Name</th>
+              <th>Hersteller</th>
+              <th>Gesamtmenge</th>
+              <th>Einheit(en)</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map(r=>`
               <tr>
-                ${HAS_ARTICLE_NUMBER?`<td style="border-bottom:1px solid var(--line); padding:.5rem">${r.article_number?escapeHtml(r.article_number):'<span class="hint">–</span>'}</td>`:''}
-                <td style="border-bottom:1px solid var(--line); padding:.5rem">${r.name?escapeHtml(r.name):'<span class="hint">(ohne Name)</span>'}</td>
-                <td style="border-bottom:1px solid var(--line); padding:.5rem">${r.manufacturer?escapeHtml(r.manufacturer):'<span class="hint">–</span>'}</td>
-                <td style="border-bottom:1px solid var(--line); padding:.5rem">${Number(r.qty).toLocaleString()}</td>
-                <td style="border-bottom:1px solid var(--line); padding:.5rem">${r.units.size?escapeHtml(Array.from(r.units).join(', ')):'<span class="hint">–</span>'}</td>
+                ${HAS_ARTICLE_NUMBER?`<td>${r.article_number?escapeHtml(r.article_number):'<span class="hint">–</span>'}</td>`:''}
+                <td>${r.name?escapeHtml(r.name):'<span class="hint">(ohne Name)</span>'}</td>
+                <td>${r.manufacturer?escapeHtml(r.manufacturer):'<span class="hint">–</span>'}</td>
+                <td>${Number(r.qty).toLocaleString()}</td>
+                <td>${r.units.size?escapeHtml(Array.from(r.units).join(', ')):'<span class="hint">–</span>'}</td>
               </tr>`).join('')}
           </tbody>
         </table>`;
     }
+
+    // === Zonen-Übersicht
+    document.getElementById('btn-zones-overview').addEventListener('click', async ()=>{
+      await showZonesOverview(); elZonesModal.style.display='flex';
+    });
+    elZonesClose.addEventListener('click', ()=>{ elZonesModal.style.display='none'; });
+
+    async function showZonesOverview(){
+      elZonesTableWrap.innerHTML = 'Lade…';
+      const zr = await supabase.from('storage_zones').select('id,name,status,color,geom');
+      if (zr.error){ elZonesTableWrap.innerHTML = 'Fehler: '+escapeHtml(zr.error.message); return; }
+      const zonesData = zr.data||[];
+
+      const pr = await supabase.from('zone_projects').select('zone_id, project:projects(name)');
+      const projectsByZone = new Map();
+      if (!pr.error) (pr.data||[]).forEach(x=>{
+        const arr = projectsByZone.get(x.zone_id) || []; arr.push(x.project?.name||'Projekt'); projectsByZone.set(x.zone_id, arr);
+      });
+
+      const ir = await selectAllItems();
+      const itemsByZone = new Map();
+      if (!ir.error) (ir.data||[]).forEach(it=>{
+        const arr = itemsByZone.get(it.zone_id) || [];
+        arr.push(it); itemsByZone.set(it.zone_id, arr);
+      });
+
+      const rows = zonesData.map(z=>{
+        const projs = (projectsByZone.get(z.id)||[]).join(', ');
+        const items = (itemsByZone.get(z.id)||[]);
+        // kurze Items-Zeile (Name x Menge)
+        const shortItems = items.slice(0,3).map(it=>{
+          const q = (it.qty??'')!==''?`×${Number(it.qty)}`:'';
+          return (it.name||'ohne Name') + (q?` ${q}`:'');
+        }).join(' · ');
+        const more = items.length>3 ? ` +${items.length-3} weitere` : '';
+        return { id:z.id, name:z.name, status:z.status, color:z.color, projs, itemsText: shortItems + more, bounds: z.geom };
+      });
+
+      elZonesTableWrap.innerHTML = `
+        <table class="table">
+          <thead><tr><th>Zone</th><th>Status</th><th>Projekte</th><th>Artikel (Kurz)</th></tr></thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr class="clickable" data-id="${r.id}">
+                <td>${escapeHtml(r.name||'')}</td>
+                <td>${escapeHtml(r.status||'')}</td>
+                <td>${r.projs?escapeHtml(r.projs):'<span class="hint">–</span>'}</td>
+                <td>${r.itemsText?escapeHtml(r.itemsText):'<span class="hint">–</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+      // Klick -> zoom auf Zone
+      elZonesTableWrap.querySelectorAll('tr[data-id]').forEach(tr=>{
+        tr.addEventListener('click', ()=>{
+          const id = tr.getAttribute('data-id');
+          const l = zoneLayerById.get(id);
+          if (l){ try{ map.fitBounds(l.getBounds(), { padding:[40,40] }); }catch{} }
+          elZonesModal.style.display='none';
+        });
+      });
+    }
+
   </script>
 </body>
 </html>
