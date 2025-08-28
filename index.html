@@ -356,10 +356,37 @@
       if (myRole==='admin') await loadAllowedUsers();
     }
     async function getMyRole(){
-      if (!currentUser?.email) return null;
-      const r = await supabase.from('allowed_emails').select('role').eq('email', currentUser.email.toLowerCase()).maybeSingle();
-      if (r.error){ console.warn('allowed_emails:', r.error.message); return null; }
-      return r.data?.role ?? null;
+  if (!currentUser?.email) return null;
+  const raw = currentUser.email;
+  const mail = raw.trim().toLowerCase();
+  console.log('[getMyRole] session email =', raw);
+
+  // 1) exakte Suche (lowercase)
+  let r = await supabase
+    .from('allowed_emails')
+    .select('role')
+    .eq('email', mail)
+    .maybeSingle();
+
+  // 2) Fallback: ilike, falls z.B. Whitespace/andere Groß/Kleinschreibung
+  if (!r.data && !r.error) {
+    const r2 = await supabase
+      .from('allowed_emails')
+      .select('role')
+      .ilike('email', mail) // case-insensitive
+      .limit(1);
+    if (!r2.error && r2.data?.length) {
+      return r2.data[0].role;
+    }
+  }
+
+  if (r.error) {
+    console.warn('getMyRole error:', r.error);
+    return null;
+  }
+  return r.data?.role ?? null;
+}
+
     }
     async function loadAllowedUsers(){
       usersBody.innerHTML = '<tr><td colspan="3" class="hint">Lade…</td></tr>';
@@ -1047,3 +1074,4 @@
   </script>
 </body>
 </html>
+
