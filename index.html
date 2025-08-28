@@ -50,7 +50,6 @@
     button.icon{ width:2.1rem; height:2.1rem; display:inline-grid; place-items:center; padding:0; }
 
     #map{ height:calc(100vh - 160px); width:100%; }
-    /* Schwarze-Karte vermeiden: GPU-Hints */
     .leaflet-container{ background:#0a0e13; will-change: transform; }
     .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; will-change: transform; transform: translateZ(0); }
     .leaflet-tile{ image-rendering:-webkit-optimize-contrast; }
@@ -71,7 +70,7 @@
     .zone-popup{ max-width:90vw !important; }
     @media (min-width:800px){ .zone-popup{ max-width:420px !important; } }
 
-    /* S/W Karte – per Klasse am Map-Element */
+    /* S/W Karte – standardmäßig an (Klasse an #map) */
     .grayscale .leaflet-tile{ filter: grayscale(1) contrast(1.05) brightness(0.95); }
 
     /* Login-Overlay */
@@ -236,7 +235,6 @@
     map.on('zoomend', invalidate);
     map.whenReady(invalidate);
     document.addEventListener('visibilitychange', invalidate);
-    // Beobachte Map-Container-Größe (z.B. mobiles Tastatur-Resize)
     new ResizeObserver(invalidate).observe(mapEl);
 
     // === Layer-Gruppen
@@ -355,39 +353,34 @@
       updateAuthUI();
       if (myRole==='admin') await loadAllowedUsers();
     }
+
+    // ROBUSTE Rollen-Erkennung
     async function getMyRole(){
-  if (!currentUser?.email) return null;
-  const raw = currentUser.email;
-  const mail = raw.trim().toLowerCase();
-  console.log('[getMyRole] session email =', raw);
+      if (!currentUser?.email) return null;
+      const raw = currentUser.email;
+      const mail = raw.trim().toLowerCase();
+      console.log('[getMyRole] session email =', raw);
 
-  // 1) exakte Suche (lowercase)
-  let r = await supabase
-    .from('allowed_emails')
-    .select('role')
-    .eq('email', mail)
-    .maybeSingle();
+      // exakte Suche
+      let r = await supabase
+        .from('allowed_emails')
+        .select('role')
+        .eq('email', mail)
+        .maybeSingle();
 
-  // 2) Fallback: ilike, falls z.B. Whitespace/andere Groß/Kleinschreibung
-  if (!r.data && !r.error) {
-    const r2 = await supabase
-      .from('allowed_emails')
-      .select('role')
-      .ilike('email', mail) // case-insensitive
-      .limit(1);
-    if (!r2.error && r2.data?.length) {
-      return r2.data[0].role;
+      // Fallback: ilike
+      if (!r.data && !r.error) {
+        const r2 = await supabase
+          .from('allowed_emails')
+          .select('role')
+          .ilike('email', mail)
+          .limit(1);
+        if (!r2.error && r2.data?.length) return r2.data[0].role;
+      }
+      if (r.error) { console.warn('getMyRole error:', r.error); return null; }
+      return r.data?.role ?? null;
     }
-  }
 
-  if (r.error) {
-    console.warn('getMyRole error:', r.error);
-    return null;
-  }
-  return r.data?.role ?? null;
-}
-
-    }
     async function loadAllowedUsers(){
       usersBody.innerHTML = '<tr><td colspan="3" class="hint">Lade…</td></tr>';
       const r = await supabase.from('allowed_emails').select('email,role').order('email');
@@ -522,7 +515,6 @@
           <button class="btn-move"   data-zone="${row.id}" title="Bewegen (ziehen)">Bewegen</button>
           <button class="btn-rotate" data-zone="${row.id}" title="Drehen per Slider">Drehen</button>
         </div>` : '';
-      // Status-Dropdown immer sichtbar (lesen & ändern wenn Admin)
       const statusSel = `
         <div class="row" style="gap:.4rem; margin-top:.25rem">
           <label class="hint">Status:</label>
@@ -1038,7 +1030,6 @@
       const rows = zonesData.map(z=>{
         const projs = (projectsByZone.get(z.id)||[]).join(', ');
         const items = (itemsByZone.get(z.id)||[]);
-        // kurze Items-Zeile (Name x Menge)
         const shortItems = items.slice(0,3).map(it=>{
           const q = (it.qty??'')!==''?`×${Number(it.qty)}`:'';
           return (it.name||'ohne Name') + (q?` ${q}`:'');
@@ -1060,7 +1051,6 @@
               </tr>`).join('')}
           </tbody>
         </table>`;
-      // Klick -> zoom auf Zone
       elZonesTableWrap.querySelectorAll('tr[data-id]').forEach(tr=>{
         tr.addEventListener('click', ()=>{
           const id = tr.getAttribute('data-id');
@@ -1074,4 +1064,3 @@
   </script>
 </body>
 </html>
-
