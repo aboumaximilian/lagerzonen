@@ -3,64 +3,198 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lagerzonen — Boschstraße 60a, 50171 Kerpen</title>
+  <title>Lagerzonen — Boschstraße 60a</title>
+
   <!-- Leaflet & Leaflet.draw -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <!-- Shapes ziehen -->
+  <script src="https://unpkg.com/leaflet-path-drag@0.0.7/Leaflet.Path.Drag.js"></script>
+  <!-- Turf (Rotation/Clipping) -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <!-- PapaParse für CSV -->
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
   <style>
-    :root { --bg:#0b0f14; --panel:#121821; --text:#f3f6fb; --muted:#9fb0c0; --accent:#7cc4ff; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial; background: var(--bg); color: var(--text); }
+    :root{
+      --bg:#0b0f14; --panel:#101620; --text:#e7edf6; --muted:#9bb0c7;
+      --line:#1b2737; --accent:#7cc4ff; --btn:#141c28; --radius:.6rem;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu;
+      background:var(--bg); color:var(--text); }
 
-    header { position: sticky; top: 0; z-index: 1000; background: var(--panel); border-bottom: 1px solid #1d2735; padding: .75rem 1rem; display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
-    header h1 { font-size: 1rem; font-weight: 600; margin: 0 .5rem 0 0; }
-    .spacer { flex: 1; }
-    .pill { background: #0f1622; border: 1px solid #1e2a3d; border-radius: 999px; padding: .4rem .75rem; color: var(--muted); }
-    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-    input[type=email], input[type=text], select { background: #0f1622; border: 1px solid #223146; border-radius: .5rem; color: var(--text); padding: .5rem .6rem; }
-    button { background: #1e2a3d; color: var(--text); border: 1px solid #2b3b55; border-radius: .5rem; padding: .5rem .75rem; cursor: pointer; }
-    button:hover { filter: brightness(1.1); }
+    header{
+      position:sticky; top:0; z-index:1000; background:var(--panel); border-bottom:1px solid var(--line);
+      padding:.5rem .75rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;
+    }
+    h1{ font-size:.95rem; margin:0; font-weight:600; opacity:.9 }
+    .sp{ flex:1 }
+    .row{ display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+    input[type=email], input[type=password], input[type=text], select{
+      background:#0f1622; border:1px solid #223146; border-radius:var(--radius);
+      color:var(--text); padding:.42rem .5rem; font-size:.9rem;
+    }
+    input[type=file]{ color:var(--muted); }
+    button{
+      background:var(--btn); border:1px solid var(--line); color:var(--text);
+      border-radius:var(--radius); padding:.38rem .5rem; cursor:pointer; font-size:.9rem;
+    }
+    button.ghost{ background:transparent; border-color:#1f2b3d; color:#cfe5ff; }
+    button:hover{ filter:brightness(1.08); }
+    button.icon{ width:2.1rem; height:2.1rem; display:inline-grid; place-items:center; padding:0; }
 
-    #map { height: calc(100vh - 140px); width: 100%; }
-    .leaflet-container { background: #0a0e13; }
-    .legend { position: fixed; right: .75rem; bottom: .75rem; background: var(--panel); border: 1px solid #1d2735; border-radius: .75rem; padding: .5rem .75rem; font-size: .85rem; color: var(--muted); }
-    .legend .dot { display:inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .4rem; vertical-align: middle; }
-    .hint { color: var(--muted); font-size: .9rem; }
+    #map{ height:calc(100vh - 160px); width:100%; }
+    .leaflet-container{ background:#0a0e13; will-change: transform; }
+    .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; will-change: transform; transform: translateZ(0); }
+    .leaflet-tile{ image-rendering:-webkit-optimize-contrast; }
+
+    .legend{
+      position:fixed; right:.6rem; bottom:.6rem; background:var(--panel); border:1px solid var(--line);
+      border-radius:var(--radius); padding:.4rem .55rem; font-size:.82rem; color:var(--muted); z-index:1100;
+    }
+    .legend .dot{ display:inline-block; width:.75rem; height:.75rem; border-radius:2px; margin-right:.35rem; vertical-align:middle; }
+    .hint{ color:var(--muted); font-size:.85rem; }
+
+    .zone-popup .leaflet-popup-content{ max-height:60vh; overflow:auto; }
+    .zone-popup{ max-width:90vw !important; }
+    @media (min-width:800px){ .zone-popup{ max-width:420px !important; } }
+
+    /* S/W Karte – standardmäßig an */
+    .grayscale .leaflet-tile{ filter: grayscale(1) contrast(1.05) brightness(0.95); }
+
+    /* Login/Overlay */
+    #login-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:2000; }
+    #login-card{ width:min(520px,92vw); background:var(--panel); border:1px solid var(--line); border-radius:.9rem; padding:1rem; }
+    #admin-panel{ display:none; margin-top:.75rem; border-top:1px solid var(--line); padding-top:.75rem; }
+    #users-table th, #users-table td{ border-bottom:1px solid var(--line); padding:.35rem .4rem; text-align:left; }
+    #users-table{ width:100%; border-collapse:collapse; font-size:.9rem; }
+
+    /* Modale */
+    .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:2000; }
+    .modal{ background:var(--panel); border:1px solid var(--line); border-radius:.8rem; padding:1rem; width:min(1100px,96vw); max-height:80vh; overflow:auto; }
+    .table{ width:100%; border-collapse:collapse; }
+    .table th,.table td{ border-bottom:1px solid var(--line); padding:.5rem; text-align:left; font-size:.95rem; }
+    .clickable{ cursor:pointer; }
+
+    /* Popup Burgermenü */
+    .menu-wrap{ position:relative; }
+    .menu-btn{ padding:.3rem .5rem; }
+    .menu{ position:absolute; right:0; top:2rem; background:#0f1622; border:1px solid #223146; border-radius:.6rem; min-width:200px; display:none; z-index:10; }
+    .menu.open{ display:block; }
+    .menu button{ display:block; width:100%; text-align:left; background:transparent; border:0; padding:.5rem .6rem; }
+    .menu button:hover{ background:#0c121c; }
   </style>
 </head>
 <body>
   <header>
-    <h1>📦 Lagerzonen — Boschstraße 60a</h1>
-    <span class="pill">Fixes Grundstück, kostenlose Tools</span>
-    <div class="spacer"></div>
-    <div id="auth" class="row">
-      <div id="signed-out" class="row">
-        <input id="email" type="email" placeholder="E-Mail für Magic Link" />
-        <button id="sign-in">Einloggen</button>
-      </div>
-      <div id="signed-in" class="row" style="display:none">
-        <span class="hint">Angemeldet als <strong id="user-email">–</strong></span>
-        <button id="sign-out">Logout</button>
-      </div>
-      <button id="refresh">🔄 Aktualisieren</button>
-      <select id="project-filter" style="min-width:220px">
-        <option value="">— Projekt wählen —</option>
+    <h1>📦 Lagerzonen</h1>
+
+    <!-- Projektwahl + Suche -->
+    <div class="row">
+      <select id="project-filter" title="Projekt wählen" style="min-width:200px">
+        <option value="">Projekt…</option>
       </select>
-      <label class="row" style="gap:.4rem;align-items:center">
-        <input id="sketch-mode" type="checkbox" />
-        <span class="hint">Skizzenmodus (gestrichelt)</span>
+      <input id="project-search" type="text" placeholder="Suchen…" style="width:150px" />
+      <button id="project-clear" class="icon ghost" title="Projekt-Filter löschen">✖</button>
+    </div>
+
+    <div class="sp"></div>
+
+    <div class="row">
+      <label class="row" title="Skizzenmodus (gestrichelt)">
+        <input id="sketch-mode" type="checkbox" /><span class="hint">Skizze</span>
       </label>
+      <label class="row" title="Karte in Schwarz/Weiß">
+        <input id="bw-toggle" type="checkbox" checked /><span class="hint">S/W Karte</span>
+      </label>
+      <button id="btn-zones-overview" class="ghost" title="Zonen-Übersicht">🗂️</button>
+    </div>
+
+    <div class="sp"></div>
+
+    <div class="row">
+      <button id="btn-items-overview" class="ghost" title="Artikel-Liste">📋</button>
+      <input id="csv-input" type="file" accept=".csv,text/csv" style="display:none" />
+      <button id="btn-upload-csv" class="ghost" title="CSV Artikelstamm hochladen">⬆</button>
+      <button id="refresh" class="ghost" title="Aktualisieren">🔄</button>
+
+      <!-- E-Mail + Passwort -->
+      <span id="signed-out" class="row">
+        <input id="email" type="email" placeholder="E-Mail" style="width:170px" />
+        <input id="password" type="password" placeholder="Passwort" style="width:140px" />
+        <button id="sign-in" class="ghost">Anmelden</button>
+        <button id="sign-up" class="ghost" title="Konto erstellen">Registrieren</button>
+      </span>
+
+      <span id="signed-in" class="row" style="display:none">
+        <span class="hint">angemeldet: <strong id="user-email">–</strong> <span id="role-badge" class="hint"></span></span>
+        <button id="btn-users" class="ghost" title="Nutzer verwalten (Admin)" style="display:none">👤</button>
+        <button id="sign-out" class="ghost" title="Logout">⎋</button>
+      </span>
     </div>
   </header>
 
-  <div id="map"></div>
+  <div id="map" class="grayscale"></div>
 
   <div class="legend">
     <div><span class="dot" style="background:#4caf50"></span> frei</div>
     <div><span class="dot" style="background:#ff9800"></span> reserviert</div>
     <div><span class="dot" style="background:#f44336"></span> belegt</div>
+  </div>
+
+  <!-- Artikel-Liste Modal -->
+  <div id="items-modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
+        <h3 style="margin:0">📋 Artikel-Übersicht</h3>
+        <button id="items-modal-close">Schließen</button>
+      </div>
+      <div id="items-table-wrap" class="hint">Lade…</div>
+    </div>
+  </div>
+
+  <!-- Zonen-Übersicht Modal -->
+  <div id="zones-modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
+        <h3 style="margin:0">🗂️ Zonen-Übersicht</h3>
+        <button id="zones-modal-close">Schließen</button>
+      </div>
+      <div id="zones-table-wrap" class="hint">Lade…</div>
+    </div>
+  </div>
+
+  <!-- Login & Admin Overlay -->
+  <div id="login-overlay">
+    <div id="login-card">
+      <h3 style="margin:.1rem 0 .6rem 0">Anmelden</h3>
+      <div class="row" style="margin-bottom:.5rem">
+        <input id="overlay-email" type="email" placeholder="E-Mail" style="flex:1" />
+        <input id="overlay-password" type="password" placeholder="Passwort" style="flex:1" />
+        <button id="overlay-sign-in">Login</button>
+      </div>
+      <div class="hint">Noch kein Konto? E-Mail + Passwort eingeben und oben im Header „Registrieren“ klicken.</div>
+
+      <div id="admin-panel">
+        <h4 style="margin:.9rem 0 .4rem 0">Nutzer verwalten</h4>
+        <div class="row" style="margin-bottom:.4rem">
+          <input id="new-user-email" type="email" placeholder="Whitelist-E-Mail" style="flex:1" />
+          <select id="new-user-role">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button id="btn-add-user">Hinzufügen</button>
+        </div>
+        <table id="users-table" class="table">
+          <thead><tr><th>E-Mail</th><th>Rolle</th><th>Aktion</th></tr></thead>
+          <tbody id="users-body"><tr><td colspan="3" class="hint">Lade…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script type="module">
@@ -69,31 +203,49 @@
     // === Supabase ===
     const SUPABASE_URL = 'https://ntnxynmkwfvaahdmkbbw.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50bnh5bm1rd2Z2YWFoZG1rYmJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzNzU1MTQsImV4cCI6MjA3MTk1MTUxNH0.TwDeFNl8vZbJ3l4vH4Zlxw2Vh8xLx0VQLfqPFN7kLQ4';
-    const REDIRECT_URL = 'https://aboumaximilian.github.io/lagerzonen';
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // === Karte ===
     const KERPEN = [50.881785, 6.668967];
     const BOUNDS = L.latLngBounds([ KERPEN[0] - 0.0006, KERPEN[1] - 0.0008 ], [ KERPEN[0] + 0.0006, KERPEN[1] + 0.0008 ]);
-
     const map = L.map('map', { maxBounds: BOUNDS, maxBoundsViscosity: 1.0 }).setView(KERPEN, 19);
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap-Mitwirkende' }).addTo(map);
-    const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, attribution: 'Tiles &copy; Esri & contributors' });
 
-    L.control.layers({ 'Karte (OSM)': osm, 'Satellit (Esri)': esriSat }, {}, { position: 'topleft' }).addTo(map);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 20, attribution: '&copy; OpenStreetMap-Mitwirkende', crossOrigin: true
+    }).addTo(map);
+    const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 20, attribution: 'Tiles &copy; Esri & contributors', crossOrigin: true
+    });
+
+    L.control.layers({ 'OSM': osm, 'Satellit': esriSat }, {}, { position: 'topleft' }).addTo(map);
     L.rectangle(BOUNDS, { color: '#7cc4ff', weight: 1, fillOpacity: 0.03 }).addTo(map);
-    setTimeout(() => map.invalidateSize(), 200);
-    window.addEventListener('resize', () => map.invalidateSize());
-    // Schwarze-Karte-Fix
-    map.on('baselayerchange', () => setTimeout(() => map.invalidateSize(), 150));
-    map.whenReady(() => setTimeout(() => map.invalidateSize(), 150));
-    document.addEventListener('visibilitychange', () => setTimeout(() => map.invalidateSize(), 150));
 
+    // S/W Schalter
+    const mapEl = document.getElementById('map');
+    const bwToggle = document.getElementById('bw-toggle');
+    const setBW = on => { mapEl.classList.toggle('grayscale', !!on); requestAnimationFrame(() => map.invalidateSize()); };
+    setBW(true);
+    bwToggle.addEventListener('change', e => setBW(e.target.checked));
+
+    // „schwarze Karte“-Fixe
+    const invalidate = () => setTimeout(() => map.invalidateSize(), 120);
+    setTimeout(invalidate, 200);
+    window.addEventListener('resize', invalidate);
+    map.on('baselayerchange', invalidate);
+    map.on('layeradd', invalidate);
+    map.on('tileerror', invalidate);
+    map.on('zoomend', invalidate);
+    map.whenReady(invalidate);
+    document.addEventListener('visibilitychange', invalidate);
+    new ResizeObserver(invalidate).observe(mapEl);
+
+    // === Layer-Gruppen
     const zones = L.featureGroup().addTo(map);
-    const overlays = L.featureGroup().addTo(map); // gestrichelte Skizzen
+    const overlays = L.featureGroup().addTo(map);
     const zoneLayerById = new Map();
+    const zoneOrigColorById = new Map();
 
-    // === Zeichnen/Bearbeiten ===
+    // === Zeichnen/Bearbeiten
     const drawControl = new L.Control.Draw({
       draw: { polyline:false, circle:false, circlemarker:false, marker:false,
         polygon:{ allowIntersection:false, showArea:true }, rectangle:{ showArea:true } },
@@ -101,70 +253,250 @@
     });
     function setDrawingEnabled(on){ if (on) map.addControl(drawControl); else try{ map.removeControl(drawControl);}catch(e){} }
 
-    // === Auth UI ===
-    const elEmail = document.getElementById('email');
-    const elSignIn = document.getElementById('sign-in');
-    const elSignOut = document.getElementById('sign-out');
-    const elSignedIn = document.getElementById('signed-in');
-    const elSignedOut = document.getElementById('signed-out');
-    const elUserEmail = document.getElementById('user-email');
-    const elRefresh = document.getElementById('refresh');
-    const elProjectFilter = document.getElementById('project-filter');
+    // === UI-Refs
+    const $ = s => document.querySelector(s);
+    const elEmail = $('#email'), elPassword = $('#password');
+    const elSignIn = $('#sign-in'), elSignUp = $('#sign-up');
+    const elSignOut = $('#sign-out'), elSignedIn = $('#signed-in'), elSignedOut = $('#signed-out');
+    const elUserEmail = $('#user-email'), elRoleBadge = $('#role-badge');
+    const elRefresh = $('#refresh'), elBtnUsers = $('#btn-users');
 
+    const elProjectFilter = $('#project-filter'), elProjectSearch = $('#project-search'), elProjectClear = $('#project-clear');
+
+    const elBtnOverview = $('#btn-items-overview'), elItemsModal = $('#items-modal'), elItemsClose = $('#items-modal-close'), elItemsTableWrap = $('#items-table-wrap');
+    const elBtnUploadCsv = $('#btn-upload-csv'), elCsvInput = $('#csv-input');
+
+    const elZonesModal = $('#zones-modal'), elZonesClose = $('#zones-modal-close'), elZonesTableWrap = $('#zones-table-wrap');
+
+    // Login Overlay
+    const overlay = $('#login-overlay');
+    const overlayEmail = $('#overlay-email'), overlayPass = $('#overlay-password');
+    $('#overlay-sign-in').addEventListener('click', () => signIn(overlayEmail.value, overlayPass.value));
+
+    // Admin Panel (Whitelist)
+    const adminPanel = $('#admin-panel');
+    const usersBody = $('#users-body');
+    $('#btn-users').addEventListener('click', () => { overlay.style.display='flex'; });
+
+    $('#btn-add-user').addEventListener('click', addAllowedUser);
+
+    // Permissions / Role
     let currentUser = null;
+    let myRole = 'guest'; // 'admin' | 'user' | 'guest'
+    let allProjects = [];
+    let HAS_ARTICLE_NUMBER = true; // Feature-Flag je nach Schema
+
+    function perms(){
+      return {
+        canDraw: myRole === 'admin',
+        canManageUsers: myRole === 'admin',
+        canAddItems: myRole === 'admin' || myRole === 'user',
+        canAddProjects: myRole === 'admin' || myRole === 'user'
+      };
+    }
     function updateAuthUI(){
       const authed = !!currentUser;
       elSignedIn.style.display = authed ? '' : 'none';
       elSignedOut.style.display = authed ? 'none' : '';
       elUserEmail.textContent = currentUser?.email ?? '–';
-      setDrawingEnabled(authed);
+      elRoleBadge.textContent = authed ? `(${myRole})` : '';
+      elBtnUsers.style.display = perms().canManageUsers ? '' : 'none';
+      setDrawingEnabled(perms().canDraw);
+      $('#btn-upload-csv').style.display = HAS_ARTICLE_NUMBER ? '' : 'none';
     }
 
-    elSignIn.addEventListener('click', async () => {
-      const email = (elEmail.value || '').trim();
-      if (!email) return alert('Bitte E-Mail eingeben');
-      const res = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: REDIRECT_URL } });
-      if (res.error) return alert('Login-Fehler: ' + res.error.message);
-      alert('Magic Link gesendet!');
-    });
+    // === Auth: Passwort
+    async function signIn(email, pass){
+      email = (email||'').trim(); pass = (pass||'').trim();
+      if(!email||!pass) return alert('E-Mail und Passwort eingeben.');
+      const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+      if(error){ alert('Login fehlgeschlagen: '+error.message); return; }
+    }
+    async function signUp(email, pass){
+      email = (email||'').trim(); pass = (pass||'').trim();
+      if(!email||!pass) return alert('E-Mail und Passwort eingeben.');
+      const { error } = await supabase.auth.signUp({ email, password: pass });
+      if(error){ alert('Registrierung fehlgeschlagen: '+error.message); return; }
+      alert('Registriert. Falls Bestätigungsmail aktiv ist: bitte bestätigen, dann einloggen.');
+    }
+    elSignIn.addEventListener('click', ()=>signIn(elEmail.value, elPassword.value));
+    elSignUp.addEventListener('click', ()=>signUp(elEmail.value, elPassword.value));
     elSignOut.addEventListener('click', async () => { await supabase.auth.signOut(); });
-    elRefresh.addEventListener('click', loadZones);
-    supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; updateAuthUI(); });
-    (async () => { const s = await supabase.auth.getSession(); currentUser = s.data?.session?.user ?? null; updateAuthUI(); await loadZones(); await loadProjects(); })();
 
-    // === Helpers ===
+    elRefresh.addEventListener('click', () => { loadZones(); loadProjects(); });
+
+    supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; handlePostLogin(); });
+
+    (async () => {
+      const s = await supabase.auth.getSession();
+      currentUser = s.data?.session?.user ?? null;
+      await detectItemsSchema();
+      await handlePostLogin();
+      await loadZones();
+      await loadProjects();
+      await cleanupOrphanProjects();
+      await loadProjects();
+    })();
+
+    // === Rollen / Whitelist ===
+    async function handlePostLogin(){
+      if (!currentUser){ myRole='guest'; overlay.style.display='flex'; adminPanel.style.display='none'; updateAuthUI(); return; }
+      const role = await getMyRole();
+      myRole = role || 'guest';
+      overlay.style.display = 'none';
+      adminPanel.style.display = (myRole==='admin') ? 'block' : 'none';
+      updateAuthUI();
+      if (myRole==='admin') await loadAllowedUsers();
+    }
+
+    async function getMyRole(){
+      if (!currentUser?.email) return null;
+      const mail = currentUser.email.trim().toLowerCase();
+      let r = await supabase.from('allowed_emails').select('role').eq('email', mail).maybeSingle();
+      if (!r.data && !r.error) {
+        const r2 = await supabase.from('allowed_emails').select('role').ilike('email', mail).limit(1);
+        if (!r2.error && r2.data?.length) return r2.data[0].role;
+      }
+      if (r.error) { console.warn('getMyRole error:', r.error); return null; }
+      return r.data?.role ?? null;
+    }
+
+    async function loadAllowedUsers(){
+      usersBody.innerHTML = '<tr><td colspan="3" class="hint">Lade…</td></tr>';
+      const r = await supabase.from('allowed_emails').select('email,role').order('email');
+      if (r.error){ usersBody.innerHTML = `<tr><td colspan="3" class="hint">Fehler: ${escapeHtml(r.error.message)}</td></tr>`; return; }
+      usersBody.innerHTML = (r.data||[]).map(u => `
+        <tr>
+          <td>${escapeHtml(u.email)}</td>
+          <td>
+            <select class="role-change" data-email="${escapeHtml(u.email)}">
+              <option value="user" ${u.role==='user'?'selected':''}>User</option>
+              <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+            </select>
+          </td>
+          <td><button class="del-user" data-email="${escapeHtml(u.email)}">Entfernen</button></td>
+        </tr>
+      `).join('');
+      usersBody.querySelectorAll('.role-change').forEach(s => s.addEventListener('change', async () => {
+        const email = s.getAttribute('data-email'); const role = s.value;
+        const u = await supabase.from('allowed_emails').update({ role }).eq('email', email);
+        if (u.error) alert('Rolle ändern fehlgeschlagen: ' + u.error.message);
+      }));
+      usersBody.querySelectorAll('.del-user').forEach(b => b.addEventListener('click', async () => {
+        const email = b.getAttribute('data-email');
+        if (!confirm(email + ' entfernen?')) return;
+        const d = await supabase.from('allowed_emails').delete().eq('email', email);
+        if (d.error) alert('Entfernen fehlgeschlagen: ' + d.error.message);
+        else await loadAllowedUsers();
+      }));
+    }
+    async function addAllowedUser(){
+      const email = ($('#new-user-email').value||'').trim().toLowerCase();
+      const role = $('#new-user-role').value;
+      if (!email) return alert('E-Mail eingeben');
+      const ins = await supabase.from('allowed_emails').upsert([{ email, role }]);
+      if (ins.error) return alert('Hinzufügen fehlgeschlagen: ' + ins.error.message);
+      $('#new-user-email').value='';
+      await loadAllowedUsers();
+      alert('Nutzer in Whitelist aufgenommen.');
+    }
+
+    // === Helpers
     const statusColor = s => s==='frei' ? '#4caf50' : (s==='reserviert' ? '#ff9800' : '#f44336');
     const escapeHtml = str => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 
-    // === GRID-TOOLS (Rechteck in Zellen teilen) ===
+    // === Orientierung aus Polygon schätzen
+    function guessPolygonAngleDegrees(geojsonFeature){
+      // nimm die ersten zwei Punkte der äußeren Ringlinie
+      try{
+        const coords = geojsonFeature.geometry.type==='Polygon'
+          ? geojsonFeature.geometry.coordinates[0]
+          : geojsonFeature.geometry.coordinates[0][0]; // MultiPolygon -> erster Ring
+        if (coords.length < 2) return 0;
+        const [x1,y1] = coords[0], [x2,y2] = coords[1];
+        const rad = Math.atan2(y2 - y1, x2 - x1); // auf lon/lat
+        const deg = rad * 180 / Math.PI;
+        return Math.round(deg);
+      }catch{ return 0; }
+    }
+
+    // === Grid-Tools
     function splitBounds(bounds, rows, cols){
       const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
       const latStep = (ne.lat - sw.lat) / rows, lngStep = (ne.lng - sw.lng) / cols;
       const cells = [];
       for (let r=0; r<rows; r++){
         for (let c=0; c<cols; c++){
-          const lat1 = sw.lat + r*latStep, lat2 = sw.lat + (r+1)*latStep;
-          const lng1 = sw.lng + c*lngStep, lng2 = sw.lng + (c+1)*lngStep;
-          const cellBounds = L.latLngBounds([lat1, lng1], [lat2, lng2]);
-          const gj = L.rectangle(cellBounds).toGeoJSON();
-          cells.push({ bounds: cellBounds, geojson: gj, r: r+1, c: c+1 });
+          const lat1=sw.lat+r*latStep, lat2=sw.lat+(r+1)*latStep;
+          const lng1=sw.lng+c*lngStep, lng2=sw.lng+(c+1)*lngStep;
+          const cellBounds=L.latLngBounds([lat1,lng1],[lat2,lng2]);
+          const gj=L.rectangle(cellBounds).toGeoJSON();
+          cells.push({bounds:cellBounds, geojson:gj, r:r+1, c:c+1});
+        }
+      }
+      return cells;
+    }
+    function splitPolygonIntoGridOriented(layerOrFeature, rows, cols){
+      const feature = layerOrFeature.type ? layerOrFeature : layerOrFeature.toGeoJSON();
+      const angle = guessPolygonAngleDegrees(feature); // geschätzte Ausrichtung
+      const rotated = turf.transformRotate(feature, -angle, { mutate:false });
+
+      const b = turf.bbox(rotated);
+      const [minX, minY, maxX, maxY] = b;
+      const dx = (maxX - minX)/cols;
+      const dy = (maxY - minY)/rows;
+
+      const cells=[];
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          const rect = turf.polygon([[
+            [minX + c*dx,     minY + r*dy],
+            [minX + (c+1)*dx, minY + r*dy],
+            [minX + (c+1)*dx, minY + (r+1)*dy],
+            [minX + c*dx,     minY + (r+1)*dy],
+            [minX + c*dx,     minY + r*dy]
+          ]]);
+          const clipped = turf.intersect(rotated, rect);
+          if (!clipped) continue;
+          try{ if (turf.area(clipped) < 1) continue; }catch{}
+          const back = turf.transformRotate(clipped, angle, { mutate:false });
+          cells.push({r:r+1,c:c+1,geojson:back});
         }
       }
       return cells;
     }
 
-    // === Zonen/Skizzen laden ===
+    function latlngsFromGeoJSON(gj){
+      const tmp = [];
+      L.geoJSON(gj, { onEachFeature: (f, l) => { if (l.getLatLngs) tmp.push(l.getLatLngs()); }});
+      return tmp;
+    }
+    function applyGeoJSONInPlace(group, gj){
+      const shapes = group.getLayers();
+      const latlngs = latlngsFromGeoJSON(gj);
+      shapes.forEach((sh, i) => { if (latlngs[i]) sh.setLatLngs(latlngs[i]); sh.redraw?.(); });
+    }
+
+    // === Laden Zonen/Overlays
     async function loadZones(){
-      zones.clearLayers(); zoneLayerById.clear();
+      zones.clearLayers(); zoneLayerById.clear(); zoneOrigColorById.clear();
       const r = await supabase.from('storage_zones').select('id,name,status,color,geom,created_at').order('created_at',{ascending:true}).limit(1000);
-      if (r.error) { console.error(r.error); return alert('Fehler beim Laden: '+r.error.message); }
-      (r.data||[]).forEach(row => {
+      if (r.error){ console.error(r.error); return alert('Fehler beim Laden: '+r.error.message); }
+      (r.data||[]).forEach(row=>{
         if (!row.geom) return;
-        const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
-        const layer = L.geoJSON(gj,{style:{color:row.color||statusColor(row.status),weight:2,fillOpacity:0.3}}).addTo(zones);
-        layer.eachLayer(l => l._zoneId=row.id);
+        const color=row.color||statusColor(row.status);
+        const gj=typeof row.geom==='string'?JSON.parse(row.geom):row.geom;
+        const layer=L.geoJSON(gj,{style:{color,weight:2,fillOpacity:0.3}, pane:'overlayPane'}).addTo(zones);
+        layer.eachLayer(l=>{ l._zoneId=row.id; });
         zoneLayerById.set(row.id, layer);
-        layer.bindPopup(zonePopupHtml(row));
+        zoneOrigColorById.set(row.id, color);
+
+        layer.bindPopup(zonePopupHtml(row), {
+          className:'zone-popup',
+          maxWidth:(window.innerWidth<800?Math.min(420,Math.floor(window.innerWidth*0.9)):420),
+          autoPan:true, keepInView:true,
+          autoPanPaddingTopLeft:[20,80], autoPanPaddingBottomRight:[20,140]
+        });
         layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row}})));
       });
       await loadOverlays();
@@ -172,256 +504,592 @@
     async function loadOverlays(){
       overlays.clearLayers();
       const r = await supabase.from('storage_overlays').select('id,label,notes,color,geom,created_at').order('created_at',{ascending:true}).limit(1000);
-      if (r.error) { console.warn('Overlays:',r.error.message); return; }
-      (r.data||[]).forEach(row => {
-        if (!row.geom) return;
-        const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
-        const layer = L.geoJSON(gj,{style:{color:row.color||'#7cc4ff',weight:2,fillOpacity:0.0,dashArray:'6,6'}}).addTo(overlays);
-        layer.bindPopup(`<div><strong>${escapeHtml(row.label||'Skizze')}</strong><div class="hint">${row.notes?escapeHtml(row.notes):''}</div></div>`);
+      if (r.error){ console.warn('Overlays:',r.error.message); return; }
+      (r.data||[]).forEach(row=>{
+        if(!row.geom) return;
+        const gj=typeof row.geom==='string'?JSON.parse(row.geom):row.geom;
+        const layer=L.geoJSON(gj,{style:{color:row.color||'#7cc4ff',weight:2,fillOpacity:0.0,dashArray:'6,6'}}).addTo(overlays);
+        layer.bindPopup(`<div><strong>${escapeHtml(row.label||'Skizze')}</strong><div class="hint">${row.notes?escapeHtml(row.notes):''}</div></div>`,{className:'zone-popup',keepInView:true});
       });
     }
 
     function zonePopupHtml(row){
-      const addBtn = currentUser ? `<button class="btn-add-project" data-zone="${row.id}">+ Projekt</button>` : '';
+      const canP = perms().canAddProjects;
+      const canI = perms().canAddItems;
+
+      // Burger-Menü mit Aktionen
+      const menu = perms().canDraw ? `
+        <div class="menu-wrap" style="margin:.5rem 0">
+          <button class="menu-btn">☰ Aktionen</button>
+          <div class="menu">
+            <button class="m-status">Status ändern</button>
+            <button class="m-move">Bewegen</button>
+            <button class="m-rotate">Drehen</button>
+            <button class="m-split">Teilen…</button>
+          </div>
+        </div>` : '';
+
+      const addBtn = canP ? `<button class="btn-add-project" data-zone="${row.id}" title="Projekt zuordnen">+ Projekt</button>` : '';
+      const addItem = canI ? `<button class="btn-add-item" data-zone="${row.id}" title="Artikel hinzufügen">+ Artikel</button>` : '';
       return `
         <div>
-          <strong>${escapeHtml(row.name||'Zone')}</strong><br>
-          <small class="hint">Status: ${escapeHtml(row.status||'—')}</small>
-          <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
-          <hr style="border-color:#1d2735">
-          <div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
+            <div><strong>${escapeHtml(row.name||'Zone')}</strong><div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div></div>
+            ${menu}
+          </div>
+          <hr style="border-color:#1b2737">
+          <div class="row" style="justify-content:space-between;">
             <div class="hint">Projekte in dieser Zone</div>${addBtn}
           </div>
           <div id="projects-${row.id}" class="projects" style="margin:.5rem 0"></div>
-          <div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
-            <div class="hint">Artikel in dieser Zone</div>
-            ${currentUser ? `<button class="btn-add-item" data-zone="${row.id}">+ Artikel</button>` : ''}
+          <div class="row" style="justify-content:space-between;">
+            <div class="hint">Artikel in dieser Zone</div>${addItem}
           </div>
           <div id="items-${row.id}" class="items" style="margin-top:.5rem"></div>
         </div>`;
     }
 
-    // === Zeichnen → Speichern (inkl. Grid-Aufteilung) ===
-    map.on(L.Draw.Event.CREATED, async e => {
-      if (!currentUser) return alert('Bitte vorher einloggen.');
-      const layer = e.layer, layerType = e.layerType;
-      const inside = BOUNDS.contains(layer.getBounds ? layer.getBounds() : layer.getLatLng());
-      if (!inside) return alert('Form liegt außerhalb des Grundstücks.');
-      const sketch = document.getElementById('sketch-mode').checked;
+    // === Move & Rotate & Status & Split via Menü
+    function enableMove(group, on){
+      group.getLayers().forEach(sh=>{
+        try{
+          if (on) { sh.dragging?.enable(); sh._path?.classList?.add('leaflet-grab'); }
+          else    { sh.dragging?.disable(); sh._path?.classList?.remove('leaflet-grab'); }
+        }catch{}
+      });
+    }
+    function startRotateUI(group, zoneId, container){
+      const base = group.toGeoJSON();
+      const wrap = document.createElement('div');
+      wrap.style.margin = '.25rem 0 .6rem 0';
+      wrap.innerHTML = `
+        <div class="row" style="gap:.4rem">
+          <input type="range" min="-180" max="180" value="0" step="1" class="rot-slider" style="width:160px">
+          <span class="hint rot-value">0°</span>
+          <button class="rot-save">Speichern</button>
+          <button class="rot-cancel">Abbrechen</button>
+        </div>`;
+      container.querySelector('.menu-wrap').after(wrap);
+      const slider = wrap.querySelector('.rot-slider');
+      const label  = wrap.querySelector('.rot-value');
 
-      if (sketch){
-        const label = prompt('Bezeichnung der Skizze (z.B. Baustellenzufahrt):') || 'Skizze';
-        const notes = prompt('Notizen (optional):') || null;
-        const gj = layer.toGeoJSON();
-        if (layer.setStyle) layer.setStyle({ color:'#7cc4ff', weight:2, fillOpacity:0.0, dashArray:'6,6' });
+      let currentAngle = 0;
+      const applyAngle = (deg) => {
+        currentAngle = deg; label.textContent = `${deg}°`;
+        const rotated = turf.transformRotate(base, deg, { mutate:false });
+        applyGeoJSONInPlace(group, rotated);
+      };
+      slider.oninput = () => applyAngle(Number(slider.value));
+      wrap.querySelector('.rot-cancel').onclick = () => { applyGeoJSONInPlace(group, base); wrap.remove(); };
+      wrap.querySelector('.rot-save').onclick = async () => {
+        const rotated = turf.transformRotate(base, currentAngle, { mutate:false });
+        const r = await supabase.from('storage_zones').update({ geom: rotated }).eq('id', zoneId);
+        if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
+        wrap.remove();
+      };
+    }
+
+    async function splitExistingZone(layer, zoneRow){
+      let grid = prompt('Aufteilen: z.B. 3x2 (Spalten x Zeilen)'); if(!grid) return;
+      let cols=0, rows=0;
+      const m=grid.trim().toLowerCase().match(/^([0-9]+)\s*[x×]\s*([0-9]+)$/);
+      if(m){ cols=parseInt(m[1],10); rows=parseInt(m[2],10); }
+      if(cols<=0||rows<=0) return alert('Ungültiges Raster.');
+
+      const cells = splitPolygonIntoGridOriented(layer, rows, cols);
+      if(!cells.length) return alert('Teilen fehlgeschlagen – Zone zu klein oder ungünstig.');
+
+      const status = zoneRow.status||'frei';
+      const color = zoneRow.color||statusColor(status);
+      const baseName = zoneRow.name||'Zone';
+
+      const payload = cells.map(cell => ({ name:`${baseName}-${cell.c}/${cell.r}`, status, color, geom:cell.geojson }));
+      const ins = await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
+      if (ins.error) return alert('Speichern (Teilen) fehlgeschlagen: '+ins.error.message);
+
+      // Optional: Original löschen?
+      if (confirm('Original-Zone nach dem Teilen löschen?')){
+        const del = await supabase.from('storage_zones').delete().eq('id', zoneRow.id);
+        if (del.error) alert('Original nicht gelöscht: '+del.error.message);
+      }
+
+      await loadZones(); await loadProjects();
+      alert('Zone aufgeteilt.');
+    }
+
+    // === Zeichnen → Speichern (+orientierte Teilung für Polygon/Rect)
+    map.on(L.Draw.Event.CREATED, async e=>{
+      if(!(currentUser && myRole!=='guest')) { overlay.style.display='flex'; return; }
+      if(!perms().canDraw) return alert('Nur Admins dürfen Zonen anlegen/bearbeiten.');
+      const layer=e.layer, type=e.layerType;
+      const inside=BOUNDS.contains(layer.getBounds?layer.getBounds():layer.getLatLng());
+      if(!inside) return alert('Form liegt außerhalb des Grundstücks.');
+      const sketch=$('#sketch-mode').checked;
+
+      if(sketch){
+        const label=prompt('Bezeichnung (z.B. Baustellenzufahrt):')||'Skizze';
+        const notes=prompt('Notizen (optional):')||null;
+        const gj=layer.toGeoJSON();
+        if(layer.setStyle) layer.setStyle({color:'#7cc4ff',weight:2,fillOpacity:0.0,dashArray:'6,6'});
         overlays.addLayer(layer);
-        const r = await supabase.from('storage_overlays').insert({ label, notes, color:'#7cc4ff', geom:gj }).select('id').single();
-        if (r.error){ overlays.removeLayer(layer); return alert('Skizze speichern fehlgeschlagen: '+r.error.message); }
-        layer.bindPopup(`<div><strong>${escapeHtml(label)}</strong>${notes?`<div class="hint">${escapeHtml(notes)}</div>`:''}</div>`);
+        const r=await supabase.from('storage_overlays').insert({label,notes,color:'#7cc4ff',geom:gj}).select('id').single();
+        if(r.error){ overlays.removeLayer(layer); return alert('Skizze speichern fehlgeschlagen: '+r.error.message); }
+        layer.bindPopup(`<div><strong>${escapeHtml(label)}</strong>${notes?`<div class="hint">${escapeHtml(notes)}</div>`:''}</div>`,{className:'zone-popup',keepInView:true});
         return;
       }
 
-      const name = prompt('Name der Zone (Basis, z.B. A):'); if (name===null) return;
-      const status = prompt('Status (frei/reserviert/belegt):','frei') || 'frei';
-      const color = statusColor(status);
+      const name=prompt('Name der Zone (Basis, z.B. A):'); if(name===null) return;
+      const status=prompt('Status (frei/reserviert/belegt):','frei')||'frei';
+      const color=statusColor(status);
 
-      if (layerType === 'rectangle'){
-        const grid = prompt('Aufteilen? z.B. 3x2 (Spalten x Zeilen) — leer = keine Aufteilung:','');
+      let didGrid=false;
+      if(type==='rectangle'||type==='polygon'){
+        const grid=prompt('Aufteilen? z.B. 3x2 (Spalten x Zeilen) — leer = keine Aufteilung:','');
         let cols=0, rows=0;
-        if (grid && grid.trim()){
-          const m = grid.trim().toLowerCase().match(/^([0-9]+)\\s*[x×]\\s*([0-9]+)$/);
-          if (m){ cols=parseInt(m[1],10); rows=parseInt(m[2],10); }
-          else { const n=parseInt(grid,10); if(!isNaN(n)&&n>1){ cols=n; rows=1; } }
+        if(grid&&grid.trim()){
+          const m=grid.trim().toLowerCase().match(/^([0-9]+)\s*[x×]\s*([0-9]+)$/);
+          if(m){ cols=parseInt(m[1],10); rows=parseInt(m[2],10); }
         }
-        if (cols>0 && rows>0){
-          const cells = splitBounds(layer.getBounds(), rows, cols);
-          const payload = cells.map(cell => ({ name: `${name}-${cell.c}/${cell.r}`, status, color, geom: cell.geojson }));
-          const ins = await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
-          if (ins.error) return alert('Speichern (Grid) fehlgeschlagen: '+ins.error.message);
-          (ins.data||[]).forEach(row => {
-            const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
-            const l = L.geoJSON(gj, { style:{ color, weight:2, fillOpacity:0.3 } }).addTo(zones);
-            l.eachLayer(x => x._zoneId=row.id);
-            zoneLayerById.set(row.id, l);
-            l.bindPopup(zonePopupHtml({ id:row.id, name:row.name, status, color, created_at:row.created_at }));
-            l.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer:l,row:{ id:row.id, name:row.name, status, color, created_at:row.created_at }}})));
-          });
-          await loadProjects();
-          return;
+        if(cols>0&&rows>0){
+          const cells = splitPolygonIntoGridOriented(layer, rows, cols);
+          if(cells.length){
+            const payload=cells.map(cell=>({ name:`${name}-${cell.c}/${cell.r}`, status, color, geom:cell.geojson }));
+            const ins=await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
+            if(ins.error) return alert('Speichern (Grid) fehlgeschlagen: '+ins.error.message);
+            await loadZones(); await loadProjects(); didGrid=true;
+          } else alert('Keine Zellen entstanden – Zone zu klein?');
         }
       }
+      if(didGrid) return;
 
-      // Einzel-Zone
-      const gj2 = layer.toGeoJSON();
+      const gj2=layer.toGeoJSON();
       zones.addLayer(layer);
-      const r2 = await supabase.from('storage_zones').insert({ name, status, color, geom:gj2 }).select('id,created_at').single();
-      if (r2.error){ zones.removeLayer(layer); return alert('Speichern fehlgeschlagen: '+r2.error.message); }
-      layer._zoneId = r2.data.id;
-      if (layer.setStyle) layer.setStyle({ color, fillOpacity:0.3, weight:2 });
-      layer.bindPopup(zonePopupHtml({ id:r2.data.id, name, status, color, created_at:r2.data.created_at }));
-      layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row:{ id:r2.data.id, name, status, color, created_at:r2.data.created_at }}})));
-      zoneLayerById.set(r2.data.id, layer);
+      const r2=await supabase.from('storage_zones').insert({name,status,color,geom:gj2}).select('id,created_at').single();
+      if(r2.error){ zones.removeLayer(layer); return alert('Speichern fehlgeschlagen: '+r2.error.message); }
+      layer._zoneId=r2.data.id;
+      if(layer.setStyle) layer.setStyle({color,fillOpacity:0.3,weight:2});
+      layer.bindPopup(zonePopupHtml({id:r2.data.id,name,status,color,created_at:r2.data.created_at}),{className:'zone-popup',keepInView:true});
+      layer.on('popupopen',()=>document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row:{id:r2.data.id,name,status,color,created_at:r2.data.created_at}}})));
+      zoneLayerById.set(r2.data.id,layer); zoneOrigColorById.set(r2.data.id,color);
       await loadProjects();
     });
 
-    // Bearbeiten
-    map.on(L.Draw.Event.EDITED, async e => {
-      const updates = [];
-      e.layers.eachLayer(l => { if (l._zoneId) updates.push({ id:l._zoneId, geom:l.toGeoJSON() }); });
-      for (const u of updates){
-        const r = await supabase.from('storage_zones').update({ geom:u.geom }).eq('id', u.id);
-        if (r.error) return alert('Update fehlgeschlagen: ' + r.error.message);
-      }
+    // Edit / Delete (nur Admin)
+    map.on(L.Draw.Event.EDITED, async e=>{
+      if(!perms().canDraw) return;
+      const updates=[]; e.layers.eachLayer(l=>{ if(l._zoneId) updates.push({id:l._zoneId,geom:l.toGeoJSON()}); });
+      for(const u of updates){ const r=await supabase.from('storage_zones').update({geom:u.geom}).eq('id',u.id);
+        if(r.error) return alert('Update fehlgeschlagen: '+r.error.message); }
       alert('Zonen aktualisiert.');
     });
-
-    // Löschen (nur Zonen)
-    map.on(L.Draw.Event.DELETED, async e => {
-      const ids = [];
-      e.layers.eachLayer(l => { if (l._zoneId) ids.push(l._zoneId); });
-      if (!ids.length) return;
-      const r = await supabase.from('storage_zones').delete().in('id', ids);
-      if (r.error) return alert('Löschen fehlgeschlagen: ' + r.error.message);
-      alert('Zonen gelöscht.');
-      ids.forEach(id => zoneLayerById.delete(id));
+    map.on(L.Draw.Event.DELETED, async e=>{
+      if(!perms().canDraw) return;
+      const ids=[]; e.layers.eachLayer(l=>{ if(l._zoneId) ids.push(l._zoneId); });
+      if(!ids.length) return;
+      const r=await supabase.from('storage_zones').delete().in('id',ids);
+      if(r.error) return alert('Löschen fehlgeschlagen: '+r.error.message);
+      ids.forEach(id=>{ zoneLayerById.delete(id); zoneOrigColorById.delete(id); });
+      await cleanupOrphanProjects(); await loadProjects(); alert('Zonen gelöscht.');
     });
 
-    // === Items (Artikel) ===
-    document.addEventListener('popupopen-for-zone', async ev => {
+    // Popup Interaktionen
+    document.addEventListener('popupopen-for-zone', async ev=>{
       const { layer, row } = ev.detail;
-      const el = layer.getPopup()?.getElement(); if (!el) return;
+      const el = layer.getPopup()?.getElement(); if(!el) return;
+
+      // Menü öffnen/schließen
+      const menuWrap = el.querySelector('.menu-wrap');
+      const menuBtn = menuWrap?.querySelector('.menu-btn');
+      const menu = menuWrap?.querySelector('.menu');
+      menuBtn?.addEventListener('click', () => menu.classList.toggle('open'));
+      document.addEventListener('click', (e)=>{
+        if (!menuWrap?.contains(e.target)) menu?.classList.remove('open');
+      }, {once:true});
+
+      // Aktionen
+      menu?.querySelector('.m-status')?.addEventListener('click', async ()=>{
+        const current = row.status || 'frei';
+        const next = prompt('Status (frei/reserviert/belegt):', current) || current;
+        const newColor = statusColor(next);
+        const u = await supabase.from('storage_zones').update({ status: next, color: newColor }).eq('id', row.id);
+        if (u.error) return alert('Status ändern fehlgeschlagen: '+u.error.message);
+        layer.setStyle?.({ color:newColor }); zoneOrigColorById.set(row.id, newColor);
+        menu.classList.remove('open');
+      });
+
+      menu?.querySelector('.m-move')?.addEventListener('click', async ()=>{
+        if (!perms().canDraw) return alert('Nur Admins dürfen Zonen bewegen.');
+        const on = !(layer._dragOn);
+        enableMove(layer, on);
+        layer._dragOn = on;
+        if (on){
+          const onEnd = async () => {
+            const gj = layer.toGeoJSON();
+            const r = await supabase.from('storage_zones').update({ geom: gj }).eq('id', row.id);
+            if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
+          };
+          layer.once('dragend', onEnd);
+        }
+        menu.classList.remove('open');
+      });
+
+      menu?.querySelector('.m-rotate')?.addEventListener('click', ()=>{
+        if (!perms().canDraw) return alert('Nur Admins dürfen Zonen drehen.');
+        startRotateUI(layer, row.id, el);
+        menu.classList.remove('open');
+      });
+
+      menu?.querySelector('.m-split')?.addEventListener('click', async ()=>{
+        if (!perms().canDraw) return alert('Nur Admins dürfen teilen.');
+        await splitExistingZone(layer, row);
+        menu.classList.remove('open');
+      });
+
+      // Items / Projekte einblenden
       await populateItems(row.id, el.querySelector('#items-'+row.id));
       await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id));
-      el.querySelector('.btn-add-item')?.addEventListener('click', async () => {
-        if (!currentUser) return alert('Bitte einloggen.');
-        await addItem(row.id);
-        await populateItems(row.id, el.querySelector('#items-'+row.id));
+
+      el.querySelector('.btn-add-item')?.addEventListener('click', async ()=>{
+        if(!perms().canAddItems) return alert('Keine Berechtigung.');
+        await addItem(row.id); await populateItems(row.id, el.querySelector('#items-'+row.id));
       });
-      el.querySelector('.btn-add-project')?.addEventListener('click', async () => {
-        if (!currentUser) return alert('Bitte einloggen.');
-        await addProjectToZone(row.id);
-        await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id));
-        await loadProjects();
+      el.querySelector('.btn-add-project')?.addEventListener('click', async ()=>{
+        if(!perms().canAddProjects) return alert('Keine Berechtigung.');
+        await addProjectToZone(row.id); await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id)); await loadProjects();
       });
     });
 
+    // === Items (Artikel) – schema-robust
+    function isMissingArticleColumnError(err){
+      return !!err && /article[_ ]?number.*(does not exist|schema cache)/i.test(err.message||'');
+    }
+    async function detectItemsSchema(){
+      const t = await supabase.from('storage_items').select('id,article_number').limit(1);
+      if (t.error && isMissingArticleColumnError(t.error)) HAS_ARTICLE_NUMBER = false;
+    }
+    async function selectItemsForZone(zoneId){
+      const cols = HAS_ARTICLE_NUMBER ? 'id,article_number,name,qty,unit,notes,created_at' : 'id,name,qty,unit,notes,created_at';
+      const r = await supabase.from('storage_items').select(cols).eq('zone_id', zoneId).order('created_at',{ascending:true});
+      if (r.error && isMissingArticleColumnError(r.error)){ HAS_ARTICLE_NUMBER=false; return selectItemsForZone(zoneId); }
+      return r;
+    }
+    async function selectAllItems(){
+      const cols = HAS_ARTICLE_NUMBER ? 'article_number,name,qty,unit,zone_id' : 'name,qty,unit,zone_id';
+      const r = await supabase.from('storage_items').select(cols);
+      if (r.error && isMissingArticleColumnError(r.error)){ HAS_ARTICLE_NUMBER=false; return selectAllItems(); }
+      return r;
+    }
+
     async function populateItems(zoneId, container){
-      if (!container) return;
-      container.innerHTML = '<span class="hint">Lade Artikel…</span>';
-      const r = await supabase.from('storage_items').select('id,name,qty,unit,notes,created_at').eq('zone_id', zoneId).order('created_at',{ascending:true});
-      if (r.error) return container.innerHTML = '<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
-      const data = r.data||[];
-      if (!data.length) return container.innerHTML = '<span class="hint">Keine Artikel vorhanden.</span>';
-      container.innerHTML = data.map(it => {
-        const qty = (it.qty ?? '')!=='' ? `&times; ${Number(it.qty)} ${it.unit?escapeHtml(it.unit):''}` : '';
-        const notes = it.notes ? `<div class="hint">${escapeHtml(it.notes)}</div>` : '';
-        const actions = currentUser ? `
-          <div class="row">
-            <button class="btn-edit-item" data-id="${it.id}">Bearbeiten</button>
-            <button class="btn-del-item" data-id="${it.id}">Löschen</button>
-          </div>` : '';
-        return `<div class="item-row" data-id="${it.id}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
-          <div>
-            <div><strong>${escapeHtml(it.name)}</strong> ${qty}</div>
-            ${notes}
-          </div>
-          ${actions}
-        </div>`;
+      if(!container) return;
+      container.innerHTML='<span class="hint">Lade Artikel…</span>';
+      const r = await selectItemsForZone(zoneId);
+      if(r.error) return container.innerHTML='<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
+      const data=r.data||[];
+      if(!data.length) return container.innerHTML='<span class="hint">Keine Artikel vorhanden.</span>';
+      container.innerHTML=data.map(it=>{
+        const qty=(it.qty??'')!==''?`&times; ${Number(it.qty)} ${it.unit?escapeHtml(it.unit):''}`:'';
+        const notes=it.notes?`<div class="hint">${escapeHtml(it.notes)}</div>`:'';
+        const actions=(perms().canAddItems||perms().canDraw)?`<div class="row"><button class="btn-edit-item" data-id="${it.id}">Bearbeiten</button><button class="btn-del-item" data-id="${it.id}">Löschen</button></div>`:'';
+        const head=(HAS_ARTICLE_NUMBER && it.article_number)?`<span class="hint" style="border:1px solid #28405e;padding:.05rem .35rem;border-radius:.35rem">${escapeHtml(it.article_number)}</span> `:'';
+        return `<div class="item-row" data-id="${it.id}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
+          <div><div>${head}<strong>${escapeHtml(it.name)}</strong> ${qty}</div>${notes}</div>${actions}</div>`;
       }).join('');
-      if (currentUser){
-        container.querySelectorAll('.btn-edit-item').forEach(b => b.addEventListener('click', async () => {
-          const id = b.getAttribute('data-id'); await editItem(id); await populateItems(zoneId, container);
+      if(perms().canAddItems||perms().canDraw){
+        container.querySelectorAll('.btn-edit-item').forEach(b=>b.addEventListener('click', async ()=>{
+          const id=b.getAttribute('data-id'); await editItem(id); await populateItems(zoneId, container);
         }));
-        container.querySelectorAll('.btn-del-item').forEach(b => b.addEventListener('click', async () => {
-          const id = b.getAttribute('data-id'); if (!confirm('Diesen Artikel löschen?')) return;
-          const r2 = await supabase.from('storage_items').delete().eq('id', id);
-          if (r2.error) return alert('Löschen fehlgeschlagen: ' + r2.error.message);
+        container.querySelectorAll('.btn-del-item').forEach(b=>b.addEventListener('click', async ()=>{
+          const id=b.getAttribute('data-id'); if(!confirm('Diesen Artikel löschen?')) return;
+          const r2=await supabase.from('storage_items').delete().eq('id', id);
+          if(r2.error) return alert('Löschen fehlgeschlagen: '+r2.error.message);
           await populateItems(zoneId, container);
         }));
       }
     }
+
+    // Artikelstamm Cache
+    let itemCatalogByNumber=new Map();
+    async function loadItemCatalog(){
+      if (!HAS_ARTICLE_NUMBER){ itemCatalogByNumber = new Map(); return; }
+      const r=await supabase.from('item_catalog').select('article_number,name,manufacturer').order('name');
+      if(r.error){ console.warn('Katalog laden:',r.error); itemCatalogByNumber=new Map(); return; }
+      itemCatalogByNumber=new Map((r.data||[]).filter(x=>x.article_number).map(x=>[String(x.article_number).trim(),x]));
+    }
     async function addItem(zoneId){
-      const name = prompt('Artikel/Bezeichnung:'); if (!name) return;
-      const qtyStr = prompt('Menge (Zahl):','1'); const qty = qtyStr ? Number(qtyStr) : null;
-      const unit = prompt('Einheit (z. B. Stk, Paletten, m²):','Stk') || null;
-      const notes = prompt('Notizen (optional):') || null;
-      const r = await supabase.from('storage_items').insert({ zone_id: zoneId, name, qty, unit, notes });
-      if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
+      await loadItemCatalog();
+      let article_number = '';
+      if (HAS_ARTICLE_NUMBER){
+        article_number=(prompt('Artikelnummer (optional):','')||'').trim();
+      }
+      let name=''; const cat=HAS_ARTICLE_NUMBER && article_number?itemCatalogByNumber.get(article_number):null;
+      if(cat) name=cat.name||'';
+      name=prompt('Artikel/Bezeichnung:',name||'')||name;
+      const qtyStr=prompt('Menge (Zahl):','1'); const qty=qtyStr?Number(qtyStr):null;
+      const unit=prompt('Einheit (z. B. Stk, Paletten, m²):','Stk')||null;
+      const notes=prompt('Notizen (optional):')||null;
+      const payload = HAS_ARTICLE_NUMBER ? {zone_id:zoneId,article_number:article_number||null,name,qty,unit,notes}
+                                         : {zone_id:zoneId,name,qty,unit,notes};
+      let r=await supabase.from('storage_items').insert(payload);
+      if(r.error && isMissingArticleColumnError(r.error)){
+        HAS_ARTICLE_NUMBER=false; r=await supabase.from('storage_items').insert({zone_id:zoneId,name,qty,unit,notes});
+      }
+      if(r.error) alert('Speichern fehlgeschlagen: '+r.error.message);
     }
     async function editItem(itemId){
-      const r = await supabase.from('storage_items').select('*').eq('id', itemId).single();
-      if (r.error) return alert('Laden fehlgeschlagen: ' + r.error.message);
-      const d = r.data;
-      let name = prompt('Artikel/Bezeichnung:', d.name); if (name===null) name=d.name;
-      let qtyStr = prompt('Menge (Zahl):', (d.qty ?? '')===' ' ? '' : d.qty); if (qtyStr===null) qtyStr = (d.qty ?? '')===' ' ? '' : String(d.qty);
-      const qty = qtyStr!=='' ? Number(qtyStr) : null;
-      let unit = prompt('Einheit:', d.unit || ''); if (unit===null) unit=d.unit;
-      let notes = prompt('Notizen:', d.notes || ''); if (notes===null) notes=d.notes;
-      const u = await supabase.from('storage_items').update({ name, qty, unit, notes }).eq('id', itemId);
-      if (u.error) alert('Update fehlgeschlagen: ' + u.error.message);
+      await loadItemCatalog();
+      const r=await supabase.from('storage_items').select('*').eq('id',itemId).single();
+      if(r.error) return alert('Laden fehlgeschlagen: '+r.error.message);
+      const d=r.data;
+      let article_number = d.article_number || '';
+      if (HAS_ARTICLE_NUMBER){
+        article_number=(prompt('Artikelnummer:', d.article_number||'')??d.article_number)||'';
+        article_number=article_number.trim();
+      }
+      let nameDefault=d.name||''; const cat=HAS_ARTICLE_NUMBER && article_number?itemCatalogByNumber.get(article_number):null;
+      if(cat && !nameDefault) nameDefault=cat.name||'';
+      let name=prompt('Artikel/Bezeichnung:', nameDefault)??nameDefault;
+      let qtyStr=prompt('Menge (Zahl):', d.qty??''); if(qtyStr===null) qtyStr=String(d.qty??'');
+      const qty=qtyStr!==''?Number(qtyStr):null;
+      let unit=prompt('Einheit:', d.unit||'')??d.unit;
+      let notes=prompt('Notizen:', d.notes||'')??d.notes;
+      let payload = HAS_ARTICLE_NUMBER ? {article_number:article_number||null,name,qty,unit,notes}
+                                       : {name,qty,unit,notes};
+      let u=await supabase.from('storage_items').update(payload).eq('id', itemId);
+      if(u.error && isMissingArticleColumnError(u.error)){
+        HAS_ARTICLE_NUMBER=false; payload = {name,qty,unit,notes};
+        u=await supabase.from('storage_items').update(payload).eq('id', itemId);
+      }
+      if(u.error) alert('Update fehlgeschlagen: '+u.error.message);
     }
 
-    // === Projekte ===
+    // === Projekte
     async function loadProjects(){
-      const sel = elProjectFilter; if (!sel) return;
-      const r = await supabase.from('projects').select('id,name').order('name');
-      if (r.error){ console.warn('Projekt-Ladefehler', r.error); return; }
-      const current = sel.value;
-      sel.innerHTML = '<option value="">— Projekt wählen —</option>' + (r.data||[]).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-      if (current) sel.value = current;
+      const r=await supabase.from('projects').select('id,name').order('name');
+      if(r.error){ console.warn('Projekt-Ladefehler',r.error); return; }
+      allProjects=(r.data||[]).map(p=>({id:p.id,name:p.name}));
+      rebuildProjectOptions();
     }
-    elProjectFilter.addEventListener('change', async e => {
-      const projectId = e.target.value;
-      zoneLayerById.forEach(layer => layer.setStyle?.({ weight:2, opacity:1 }));
-      if (!projectId) return;
-      const r = await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
-      if (r.error) return alert('Projekt-Suche fehlgeschlagen: ' + r.error.message);
-      const ids = (r.data||[]).map(d => d.zone_id);
-      if (!ids.length) return alert('Für dieses Projekt sind keine Zonen hinterlegt.');
-      let bounds = null;
-      ids.forEach(id => { const l = zoneLayerById.get(id); if (l){ l.setStyle?.({ weight:4, opacity:1 }); try{ const b=l.getBounds(); bounds=bounds?bounds.extend(b):b; }catch{} }});
-      if (bounds) try{ map.fitBounds(bounds, { padding:[40,40] }); }catch{}
-    });
+    function rebuildProjectOptions(){
+      const q=(elProjectSearch.value||'').toLowerCase().trim();
+      const filtered=!q?allProjects:allProjects.filter(p=>p.name.toLowerCase().includes(q));
+      const current=elProjectFilter.value;
+      elProjectFilter.innerHTML='<option value="">Projekt…</option>'+filtered.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+      if(!filtered.some(p=>String(p.id)===String(current))) elProjectFilter.value='';
+      else elProjectFilter.value=current;
+    }
+    elProjectSearch.addEventListener('input', rebuildProjectOptions);
+    elProjectClear.addEventListener('click', ()=>{ elProjectSearch.value=''; elProjectFilter.value=''; highlightNone(); rebuildProjectOptions(); });
+    elProjectFilter.addEventListener('change', async e=>{ await highlightProject(e.target.value); });
+
     async function populateZoneProjects(zoneId, container){
-      if (!container) return;
-      container.innerHTML = '<span class="hint">Lade Projekte…</span>';
-      const r = await supabase.from('zone_projects').select('id, project:projects(id,name)').eq('zone_id', zoneId).order('created_at',{ascending:true});
-      if (r.error) return container.innerHTML = '<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
-      const data = r.data||[];
-      if (!data.length) return container.innerHTML = '<span class="hint">Keine Projekte zugeordnet.</span>';
-      container.innerHTML = data.map(zp => {
-        const removeBtn = currentUser ? `<button class="btn-remove-project" data-id="${zp.id}">Entfernen</button>` : '';
-        return `<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">
-          <div><strong>${escapeHtml(zp.project?.name ?? 'Projekt')}</strong></div>${removeBtn}
+      if(!container) return;
+      container.innerHTML='<span class="hint">Lade Projekte…</span>';
+      const r=await supabase.from('zone_projects').select('id, project:projects(id,name)').eq('zone_id', zoneId).order('created_at',{ascending:true});
+      if(r.error) return container.innerHTML='<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
+      const data=r.data||[];
+      if(!data.length) return container.innerHTML='<span class="hint">Keine Projekte zugeordnet.</span>';
+      container.innerHTML=data.map(zp=>{
+        const removeBtn=perms().canAddProjects?`<button class="btn-remove-project" data-id="${zp.id}">Entfernen</button>`:'';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">
+          <div><strong>${escapeHtml(zp.project?.name??'Projekt')}</strong></div>${removeBtn}
         </div>`;
       }).join('');
-      if (currentUser){
-        container.querySelectorAll('.btn-remove-project').forEach(b => b.addEventListener('click', async () => {
-          const id = b.getAttribute('data-id');
-          const d = await supabase.from('zone_projects').delete().eq('id', id);
-          if (d.error) return alert('Entfernen fehlgeschlagen: ' + d.error.message);
-          await populateZoneProjects(zoneId, container);
-          await loadProjects();
+      if(perms().canAddProjects){
+        container.querySelectorAll('.btn-remove-project').forEach(b=>b.addEventListener('click', async ()=>{
+          const id=b.getAttribute('data-id');
+          const d=await supabase.from('zone_projects').delete().eq('id', id);
+          if(d.error) return alert('Entfernen fehlgeschlagen: ' + d.error.message);
+          await cleanupOrphanProjects(); await populateZoneProjects(zoneId, container); await loadProjects();
         }));
       }
     }
     async function addProjectToZone(zoneId){
-      const chk = await supabase.from('storage_zones').select('id').eq('id', zoneId).maybeSingle();
-      if (chk.error) return alert('Zone prüfen fehlgeschlagen: ' + chk.error.message);
-      if (!chk.data){ await loadZones(); return alert('Diese Zone existiert nicht mehr. Bitte aktualisieren.'); }
-      let name = prompt('Projektname (neu oder bestehend):'); if (!name) return; name = name.trim();
-      const existing = await supabase.from('projects').select('id').ilike('name', name).limit(1);
-      if (existing.error) return alert('Suche fehlgeschlagen: ' + existing.error.message);
-      let projectId = existing.data?.[0]?.id ?? null;
-      if (!projectId){
-        const created = await supabase.from('projects').insert({ name }).select('id').single();
-        if (created.error) return alert('Projekt anlegen fehlgeschlagen: ' + created.error.message);
-        projectId = created.data.id;
+      const chk=await supabase.from('storage_zones').select('id').eq('id', zoneId).maybeSingle();
+      if(chk.error) return alert('Zone prüfen fehlgeschlagen: '+chk.error.message);
+      if(!chk.data){ await loadZones(); return alert('Diese Zone existiert nicht mehr.'); }
+      let name=prompt('Projektname (neu oder bestehend):'); if(!name) return; name=name.trim();
+      const existing=await supabase.from('projects').select('id').ilike('name', name).limit(1);
+      if(existing.error) return alert('Suche fehlgeschlagen: '+existing.error.message);
+      let projectId=existing.data?.[0]?.id ?? null;
+      if(!projectId){
+        const created=await supabase.from('projects').insert({name}).select('id').single();
+        if(created.error) return alert('Projekt anlegen fehlgeschlagen: ' + created.error.message);
+        projectId=created.data.id;
       }
-      const link = await supabase.from('zone_projects').insert({ zone_id: zoneId, project_id: projectId });
-      if (link.error) return alert('Zuordnung fehlgeschlagen: ' + link.error.message);
-      alert('Projekt zugeordnet.');
+      const link=await supabase.from('zone_projects').insert({zone_id:zoneId, project_id:projectId});
+      if(link.error) return alert('Zuordnung fehlgeschlagen: ' + link.error.message);
+      alert('Projekt zugeordnet.'); await loadProjects();
     }
+
+    // === Projekt-Highlight
+    async function highlightProject(projectId){
+      zoneLayerById.forEach((layer,id)=>{
+        const orig=zoneOrigColorById.get(id)||'#7cc4ff';
+        layer.setStyle?.({color:orig,weight:2,opacity:1});
+      });
+      if(!projectId) return;
+      const r=await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
+      if(r.error){ alert('Projekt-Suche fehlgeschlagen: '+r.error.message); return; }
+      const ids=(r.data||[]).map(d=>d.zone_id); if(!ids.length){ alert('Für dieses Projekt sind keine Zonen hinterlegt.'); return; }
+      let bounds=null;
+      ids.forEach(id=>{
+        const l=zoneLayerById.get(id); if(!l) return;
+        l.setStyle?.({color:'#7cc4ff',weight:4,opacity:1});
+        try{ const b=l.getBounds?.(); bounds=b?(bounds?bounds.extend(b):b):bounds; }catch{}
+      });
+      if(bounds) try{ map.fitBounds(bounds,{padding:[40,40]}); }catch{}
+    }
+    function highlightNone(){
+      zoneLayerById.forEach((layer,id)=>{
+        const orig=zoneOrigColorById.get(id)||'#7cc4ff';
+        layer.setStyle?.({color:orig,weight:2,opacity:1});
+      });
+    }
+
+    // === Orphan-Projects Cleanup
+    async function cleanupOrphanProjects(){
+      const proj=await supabase.from('projects').select('id');
+      if(proj.error){ console.warn('Cleanup/Projects:',proj.error); return; }
+      const links=await supabase.from('zone_projects').select('project_id');
+      if(links.error){ console.warn('Cleanup/Links:',links.error); return; }
+      const linked=new Set((links.data||[]).map(x=>x.project_id));
+      const orphans=(proj.data||[]).map(p=>p.id).filter(id=>!linked.has(id));
+      if(orphans.length){
+        const del=await supabase.from('projects').delete().in('id', orphans);
+        if(del.error){ console.warn('Cleanup/Delete:', del.error); }
+      }
+    }
+
+    // === CSV Upload / Artikelübersicht
+    $('#btn-upload-csv').addEventListener('click', ()=>{
+      if(!perms().canAddItems || !HAS_ARTICLE_NUMBER) return alert('CSV-Import nur mit Artikelnummer aktiv.');
+      elCsvInput.value=''; elCsvInput.click();
+    });
+    elCsvInput.addEventListener('change', async ()=>{
+      if(!elCsvInput.files?.length) return; const file=elCsvInput.files[0];
+      Papa.parse(file,{ header:true, skipEmptyLines:true, complete: async (results)=>{
+        try{
+          const norm=s=>(s||'').toString().trim();
+          const rows=(results.data||[]).map(r=>{
+            const m={}; for(const [k,v] of Object.entries(r)) m[k.toString().trim().toLowerCase()]=norm(v);
+            const article_number=m['artikelnummer']||m['artnr']||m['artikel']||'';
+            const name=m['name']||m['bezeichnung']||'';
+            const manufacturer=m['hersteller']||m['lieferant']||'';
+            return { article_number:article_number||null, name:name||null, manufacturer:manufacturer||null };
+          }).filter(x=>x.article_number||x.name);
+          if(!rows.length) return alert('Keine verwertbaren Zeilen gefunden.');
+          const up=await supabase.from('item_catalog').upsert(rows,{onConflict:'article_number'});
+          if(up.error) return alert('CSV-Import fehlgeschlagen: '+up.error.message);
+          alert('Artikelstamm importiert/aktualisiert: '+rows.length+' Zeilen.');
+        }catch(err){ alert('CSV-Parsing-Fehler: '+err.message); }
+      }});
+    });
+
+    elBtnOverview.addEventListener('click', async ()=>{ await showItemsOverview(); elItemsModal.style.display='flex'; });
+    elItemsClose.addEventListener('click', ()=>{ elItemsModal.style.display='none'; });
+
+    async function showItemsOverview(){
+      await loadItemCatalog();
+      const r=await selectAllItems();
+      if(r.error){ elItemsTableWrap.innerHTML='<div class="hint">Fehler: '+escapeHtml(r.error.message)+'</div>'; return; }
+      const list=r.data||[]; const agg=new Map();
+      for(const it of list){
+        const key=(HAS_ARTICLE_NUMBER?(it.article_number||it.name):(it.name)||'—').toString().trim().toLowerCase();
+        const row=agg.get(key)||{article_number:HAS_ARTICLE_NUMBER?it.article_number:null,name:it.name||null,manufacturer:null,qty:0,units:new Set()};
+        const q=typeof it.qty==='number'?it.qty:(it.qty?Number(it.qty):0); if(!isNaN(q)) row.qty+=q;
+        if(it.unit) row.units.add(it.unit);
+        if(HAS_ARTICLE_NUMBER && row.article_number && itemCatalogByNumber.has(row.article_number)){
+          const cat=itemCatalogByNumber.get(row.article_number);
+          row.name=row.name||cat.name||row.name;
+          row.manufacturer=cat.manufacturer||row.manufacturer;
+        }
+        agg.set(key,row);
+      }
+      const rows=Array.from(agg.values()).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+      elItemsTableWrap.innerHTML=`
+        <table class="table">
+          <thead>
+            <tr>
+              ${HAS_ARTICLE_NUMBER?'<th>Artikelnummer</th>':''}
+              <th>Name</th>
+              <th>Hersteller</th>
+              <th>Gesamtmenge</th>
+              <th>Einheit(en)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr>
+                ${HAS_ARTICLE_NUMBER?`<td>${r.article_number?escapeHtml(r.article_number):'<span class="hint">–</span>'}</td>`:''}
+                <td>${r.name?escapeHtml(r.name):'<span class="hint">(ohne Name)</span>'}</td>
+                <td>${r.manufacturer?escapeHtml(r.manufacturer):'<span class="hint">–</span>'}</td>
+                <td>${Number(r.qty).toLocaleString()}</td>
+                <td>${r.units.size?escapeHtml(Array.from(r.units).join(', ')):'<span class="hint">–</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    // === Zonen-Übersicht
+    $('#btn-zones-overview').addEventListener('click', async ()=>{
+      await showZonesOverview(); elZonesModal.style.display='flex';
+    });
+    elZonesClose.addEventListener('click', ()=>{ elZonesModal.style.display='none'; });
+
+    async function showZonesOverview(){
+      elZonesTableWrap.innerHTML = 'Lade…';
+      const zr = await supabase.from('storage_zones').select('id,name,status,color,geom');
+      if (zr.error){ elZonesTableWrap.innerHTML = 'Fehler: '+escapeHtml(zr.error.message); return; }
+      const zonesData = zr.data||[];
+
+      const pr = await supabase.from('zone_projects').select('zone_id, project:projects(name)');
+      const projectsByZone = new Map();
+      if (!pr.error) (pr.data||[]).forEach(x=>{
+        const arr = projectsByZone.get(x.zone_id) || []; arr.push(x.project?.name||'Projekt'); projectsByZone.set(x.zone_id, arr);
+      });
+
+      const ir = await selectAllItems();
+      const itemsByZone = new Map();
+      if (!ir.error) (ir.data||[]).forEach(it=>{
+        const arr = itemsByZone.get(it.zone_id) || [];
+        arr.push(it); itemsByZone.set(it.zone_id, arr);
+      });
+
+      const rows = zonesData.map(z=>{
+        const projs = (projectsByZone.get(z.id)||[]).join(', ');
+        const items = (itemsByZone.get(z.id)||[]);
+        const shortItems = items.slice(0,3).map(it=>{
+          const q = (it.qty??'')!==''?`×${Number(it.qty)}`:'';
+          return (it.name||'ohne Name') + (q?` ${q}`:'');
+        }).join(' · ');
+        const more = items.length>3 ? ` +${items.length-3} weitere` : '';
+        return { id:z.id, name:z.name, status:z.status, color:z.color, projs, itemsText: shortItems + more };
+      });
+
+      elZonesTableWrap.innerHTML = `
+        <table class="table">
+          <thead><tr><th>Zone</th><th>Status</th><th>Projekte</th><th>Artikel (Kurz)</th></tr></thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr class="clickable" data-id="${r.id}">
+                <td>${escapeHtml(r.name||'')}</td>
+                <td>${escapeHtml(r.status||'')}</td>
+                <td>${r.projs?escapeHtml(r.projs):'<span class="hint">–</span>'}</td>
+                <td>${r.itemsText?escapeHtml(r.itemsText):'<span class="hint">–</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+      elZonesTableWrap.querySelectorAll('tr[data-id]').forEach(tr=>{
+        tr.addEventListener('click', ()=>{
+          const id = tr.getAttribute('data-id');
+          const l = zoneLayerById.get(id);
+          if (l){ try{ map.fitBounds(l.getBounds(), { padding:[40,40] }); }catch{} }
+          elZonesModal.style.display='none';
+        });
+      });
+    }
+
   </script>
 </body>
 </html>
