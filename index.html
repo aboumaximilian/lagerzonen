@@ -9,6 +9,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <!-- Turf.js für Polygon-Teilung -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <style>
     :root { --bg:#0b0f14; --panel:#121821; --text:#f3f6fb; --muted:#9fb0c0; --accent:#7cc4ff; }
     * { box-sizing: border-box; }
@@ -84,7 +86,6 @@
     L.rectangle(BOUNDS, { color: '#7cc4ff', weight: 1, fillOpacity: 0.03 }).addTo(map);
     setTimeout(() => map.invalidateSize(), 200);
     window.addEventListener('resize', () => map.invalidateSize());
-    // Schwarze-Karte-Fix
     map.on('baselayerchange', () => setTimeout(() => map.invalidateSize(), 150));
     map.whenReady(() => setTimeout(() => map.invalidateSize(), 150));
     document.addEventListener('visibilitychange', () => setTimeout(() => map.invalidateSize(), 150));
@@ -153,6 +154,37 @@
       return cells;
     }
 
+    // === POLYGON-GRID-TOOLS (Polygon in Raster schneiden) ===
+    function splitPolygonIntoGrid(leafletLayer, rows, cols){
+      const polyFeature = leafletLayer.toGeoJSON(); // Feature<Polygon|MultiPolygon>
+      const bounds = leafletLayer.getBounds();
+      const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+      const latStep = (ne.lat - sw.lat) / rows, lngStep = (ne.lng - sw.lng) / cols;
+
+      const cells = [];
+      for (let r=0; r<rows; r++){
+        for (let c=0; c<cols; c++){
+          const lat1 = sw.lat + r*latStep, lat2 = sw.lat + (r+1)*latStep;
+          const lng1 = sw.lng + c*lngStep, lng2 = sw.lng + (c+1)*lngStep;
+
+          // Zelle als Turf-Polygon (lng,lat!)
+          const cellPoly = turf.polygon([[
+            [lng1, lat1],[lng2, lat1],[lng2, lat2],[lng1, lat2],[lng1, lat1]
+          ]]);
+
+          // Schnittmenge mit ursprünglichem Polygon
+          const clipped = turf.intersect(polyFeature, cellPoly);
+          if (!clipped) continue;
+
+          // Kleinstfragmente (z.B. < 1 m²) verwerfen
+          try { if (turf.area(clipped) < 1) continue; } catch(e){}
+
+          cells.push({ r:r+1, c:c+1, geojson: clipped });
+        }
+      }
+      return cells;
+    }
+
     // === Zonen/Skizzen laden ===
     async function loadZones(){
       zones.clearLayers(); zoneLayerById.clear();
@@ -216,7 +248,7 @@
         if (layer.setStyle) layer.setStyle({ color:'#7cc4ff', weight:2, fillOpacity:0.0, dashArray:'6,6' });
         overlays.addLayer(layer);
         const r = await supabase.from('storage_overlays').insert({ label, notes, color:'#7cc4ff', geom:gj }).select('id').single();
-        if (r.error){ overlays.removeLayer(layer); return alert('Skizze speichern fehlgeschlagen: '+r.error.message); }
+        if (r.error){ overlays.removeLayer(layer); return alert('Skizze speichern fehlgeschlagen: ' + r.error.message); }
         layer.bindPopup(`<div><strong>${escapeHtml(label)}</strong>${notes?`<div class="hint">${escapeHtml(notes)}</div>`:''}</div>`);
         return;
       }
@@ -225,33 +257,45 @@
       const status = prompt('Status (frei/reserviert/belegt):','frei') || 'frei';
       const color = statusColor(status);
 
-      if (layerType === 'rectangle'){
+      let didGrid = false;
+      if (layerType === 'rectangle' || layerType === 'polygon'){
         const grid = prompt('Aufteilen? z.B. 3x2 (Spalten x Zeilen) — leer = keine Aufteilung:','');
         let cols=0, rows=0;
         if (grid && grid.trim()){
-          const m = grid.trim().toLowerCase().match(/^([0-9]+)\\s*[x×]\\s*([0-9]+)$/);
+          const m = grid.trim().toLowerCase().match(/^([0-9]+)\s*[x×]\s*([0-9]+)$/);
           if (m){ cols=parseInt(m[1],10); rows=parseInt(m[2],10); }
           else { const n=parseInt(grid,10); if(!isNaN(n)&&n>1){ cols=n; rows=1; } }
         }
         if (cols>0 && rows>0){
-          const cells = splitBounds(layer.getBounds(), rows, cols);
-          const payload = cells.map(cell => ({ name: `${name}-${cell.c}/${cell.r}`, status, color, geom: cell.geojson }));
-          const ins = await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
-          if (ins.error) return alert('Speichern (Grid) fehlgeschlagen: '+ins.error.message);
-          (ins.data||[]).forEach(row => {
-            const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
-            const l = L.geoJSON(gj, { style:{ color, weight:2, fillOpacity:0.3 } }).addTo(zones);
-            l.eachLayer(x => x._zoneId=row.id);
-            zoneLayerById.set(row.id, l);
-            l.bindPopup(zonePopupHtml({ id:row.id, name:row.name, status, color, created_at:row.created_at }));
-            l.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer:l,row:{ id:row.id, name:row.name, status, color, created_at:row.created_at }}})));
-          });
-          await loadProjects();
-          return;
+          const cells = layerType === 'rectangle'
+            ? splitBounds(layer.getBounds(), rows, cols)
+            : splitPolygonIntoGrid(layer, rows, cols);
+
+          if (cells.length){
+            const payload = cells.map(cell => ({
+              name: `${name}-${cell.c}/${cell.r}`,
+              status, color, geom: cell.geojson
+            }));
+            const ins = await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
+            if (ins.error) return alert('Speichern (Grid) fehlgeschlagen: '+ins.error.message);
+            (ins.data||[]).forEach(row => {
+              const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
+              const l = L.geoJSON(gj, { style:{ color, weight:2, fillOpacity:0.3 } }).addTo(zones);
+              l.eachLayer(x => x._zoneId=row.id);
+              zoneLayerById.set(row.id, l);
+              l.bindPopup(zonePopupHtml({ id:row.id, name:row.name, status, color, created_at:row.created_at }));
+              l.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer:l,row:{ id:row.id, name:row.name, status, color, created_at:row.created_at }}})));
+            });
+            await loadProjects();
+            didGrid = true;
+          } else {
+            alert('Keine Rasterzellen im Polygon – eventuell zu klein?');
+          }
         }
       }
+      if (didGrid) return;
 
-      // Einzel-Zone
+      // Einzel-Zone (keine Aufteilung)
       const gj2 = layer.toGeoJSON();
       zones.addLayer(layer);
       const r2 = await supabase.from('storage_zones').insert({ name, status, color, geom:gj2 }).select('id,created_at').single();
