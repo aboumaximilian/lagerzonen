@@ -14,9 +14,12 @@
   <!-- Turf.js für Polygon-Teilung -->
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
-  <!-- Path Transform (Verschieben / Drehen für Polylinien & Polygone) -->
+  <!-- Path Transform (Verschieben / Drehen) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet-path-transform@1.8.0/dist/L.Path.Transform.css" />
   <script src="https://unpkg.com/leaflet-path-transform@1.8.0/dist/L.Path.Transform.js"></script>
+
+  <!-- PapaParse für CSV -->
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
   <style>
     :root { --bg:#0b0f14; --panel:#121821; --text:#f3f6fb; --muted:#9fb0c0; --accent:#7cc4ff; }
@@ -29,10 +32,11 @@
     .pill { background: #0f1622; border: 1px solid #1e2a3d; border-radius: 999px; padding: .4rem .75rem; color: var(--muted); }
     .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
     input[type=email], input[type=text], select { background: #0f1622; border: 1px solid #223146; border-radius: .5rem; color: var(--text); padding: .5rem .6rem; }
+    input[type=file]{ color: var(--muted); }
     button { background: #1e2a3d; color: var(--text); border: 1px solid #2b3b55; border-radius: .5rem; padding: .5rem .75rem; cursor: pointer; }
     button:hover { filter: brightness(1.1); }
 
-    #map { height: calc(100vh - 160px); width: 100%; }
+    #map { height: calc(100vh - 200px); width: 100%; }
     .leaflet-container { background: #0a0e13; }
     .legend { position: fixed; right: .75rem; bottom: .75rem; background: var(--panel); border: 1px solid #1d2735; border-radius: .75rem; padding: .5rem .75rem; font-size: .85rem; color: var(--muted); }
     .legend .dot { display:inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .4rem; vertical-align: middle; }
@@ -44,17 +48,16 @@
       50% { filter: drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px var(--accent)); }
       100% { filter: drop-shadow(0 0 0 var(--accent)); }
     }
-    .zone-glow path, .zone-glow polygon, .zone-glow .leaflet-interactive {
-      animation: glowPulse 1.2s ease-in-out 2;
-    }
+    .zone-glow path, .zone-glow polygon, .zone-glow .leaflet-interactive { animation: glowPulse 1.2s ease-in-out 2; }
 
-    /* Griffe vom Transform-Plugin etwas deutlicher */
-    .leaflet-transform-resizable .leaflet-transform-handle {
-      width: 10px; height: 10px; border-radius: 3px;
-    }
-    .leaflet-transform-rotatable .leaflet-transform-rotate {
-      width: 12px; height: 12px; border-radius: 50%;
-    }
+    /* Transform-Handles sichtbarer */
+    .leaflet-transform-resizable .leaflet-transform-handle { width: 12px; height: 12px; border-radius: 3px; }
+    .leaflet-transform-rotatable .leaflet-transform-rotate { width: 14px; height: 14px; border-radius: 50%; }
+
+    /* Responsive Popup */
+    .zone-popup .leaflet-popup-content { max-height: 60vh; overflow:auto; }
+    .zone-popup { max-width: 90vw !important; }
+    @media (min-width: 800px){ .zone-popup { max-width: 420px !important; } }
   </style>
 </head>
 <body>
@@ -62,6 +65,14 @@
     <h1>📦 Lagerzonen — Boschstraße 60a</h1>
     <span class="pill">Fixes Grundstück, kostenlose Tools</span>
     <div class="spacer"></div>
+
+    <!-- CSV & Liste -->
+    <div class="row">
+      <button id="btn-items-overview">📋 Artikel-Liste</button>
+      <input id="csv-input" type="file" accept=".csv,text/csv" style="display:none" />
+      <button id="btn-upload-csv" title="Artikelstamm CSV hochladen">⬆ CSV Artikelstamm</button>
+    </div>
+
     <div id="auth" class="row">
       <div id="signed-out" class="row">
         <input id="email" type="email" placeholder="E-Mail für Magic Link" />
@@ -97,6 +108,19 @@
     <div><span class="dot" style="background:#f44336"></span> belegt</div>
   </div>
 
+  <!-- Modal: Artikel-Liste -->
+  <div id="items-modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
+        <h3 style="margin:0">📋 Artikel-Übersicht</h3>
+        <button id="items-modal-close">Schließen</button>
+      </div>
+      <div id="items-table-wrap">
+        <div class="hint">Lade…</div>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -109,23 +133,28 @@
     // === Karte ===
     const KERPEN = [50.881785, 6.668967];
     const BOUNDS = L.latLngBounds([ KERPEN[0] - 0.0006, KERPEN[1] - 0.0008 ], [ KERPEN[0] + 0.0006, KERPEN[1] + 0.0008 ]);
+    const map = L.map('map', {
+      maxBounds: BOUNDS, maxBoundsViscosity: 1.0
+    }).setView(KERPEN, 19);
 
-    const map = L.map('map', { maxBounds: BOUNDS, maxBoundsViscosity: 1.0 }).setView(KERPEN, 19);
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap-Mitwirkende' }).addTo(map);
     const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, attribution: 'Tiles &copy; Esri & contributors' });
 
     L.control.layers({ 'Karte (OSM)': osm, 'Satellit (Esri)': esriSat }, {}, { position: 'topleft' }).addTo(map);
     L.rectangle(BOUNDS, { color: '#7cc4ff', weight: 1, fillOpacity: 0.03 }).addTo(map);
-    setTimeout(() => map.invalidateSize(), 200);
-    window.addEventListener('resize', () => map.invalidateSize());
-    map.on('baselayerchange', () => setTimeout(() => map.invalidateSize(), 150));
-    map.whenReady(() => setTimeout(() => map.invalidateSize(), 150));
-    document.addEventListener('visibilitychange', () => setTimeout(() => map.invalidateSize(), 150));
+
+    // Map-Resize-Fixes
+    const invalidate = () => setTimeout(() => map.invalidateSize(), 150);
+    setTimeout(invalidate, 200);
+    window.addEventListener('resize', invalidate);
+    map.on('baselayerchange', invalidate);
+    map.whenReady(invalidate);
+    document.addEventListener('visibilitychange', invalidate);
 
     const zones = L.featureGroup().addTo(map);
-    const overlays = L.featureGroup().addTo(map); // gestrichelte Skizzen
+    const overlays = L.featureGroup().addTo(map);
     const zoneLayerById = new Map();
-    const zoneOrigColorById = new Map(); // Originalfarben merken
+    const zoneOrigColorById = new Map();
 
     // === Zeichnen/Bearbeiten ===
     const drawControl = new L.Control.Draw({
@@ -148,7 +177,15 @@
     const elProjectFilter = document.getElementById('project-filter');
     const elProjectSearch = document.getElementById('project-search');
     const elProjectClear = document.getElementById('project-clear');
-    let allProjects = []; // {id,name}
+    let allProjects = [];
+
+    // Artikel UI
+    const elBtnOverview = document.getElementById('btn-items-overview');
+    const elItemsModal = document.getElementById('items-modal');
+    const elItemsClose = document.getElementById('items-modal-close');
+    const elItemsTableWrap = document.getElementById('items-table-wrap');
+    const elBtnUploadCsv = document.getElementById('btn-upload-csv');
+    const elCsvInput = document.getElementById('csv-input');
 
     let currentUser = null;
     function updateAuthUI(){
@@ -176,15 +213,15 @@
       updateAuthUI();
       await loadZones();
       await loadProjects();
-      await cleanupOrphanProjects(); // initial aufräumen
-      await loadProjects(); // Liste nach Cleanup aktualisieren
+      await cleanupOrphanProjects();
+      await loadProjects();
     })();
 
     // === Helpers ===
     const statusColor = s => s==='frei' ? '#4caf50' : (s==='reserviert' ? '#ff9800' : '#f44336');
     const escapeHtml = str => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 
-    // === GRID-TOOLS (Rechteck in Zellen teilen) ===
+    // === GRID-TOOLS (Rechteck) ===
     function splitBounds(bounds, rows, cols){
       const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
       const latStep = (ne.lat - sw.lat) / rows, lngStep = (ne.lng - sw.lng) / cols;
@@ -203,40 +240,32 @@
 
     // === POLYGON-GRID-TOOLS (Polygon in Raster schneiden) ===
     function splitPolygonIntoGrid(leafletLayer, rows, cols){
-      const polyFeature = leafletLayer.toGeoJSON(); // Feature<Polygon|MultiPolygon>
+      const polyFeature = leafletLayer.toGeoJSON();
       const bounds = leafletLayer.getBounds();
       const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
       const latStep = (ne.lat - sw.lat) / rows, lngStep = (ne.lng - sw.lng) / cols;
-
       const cells = [];
       for (let r=0; r<rows; r++){
         for (let c=0; c<cols; c++){
           const lat1 = sw.lat + r*latStep, lat2 = sw.lat + (r+1)*latStep;
           const lng1 = sw.lng + c*lngStep, lng2 = sw.lng + (c+1)*lngStep;
-
           const cellPoly = turf.polygon([[
             [lng1, lat1],[lng2, lat1],[lng2, lat2],[lng1, lat2],[lng1, lat1]
           ]]);
-
           const clipped = turf.intersect(polyFeature, cellPoly);
           if (!clipped) continue;
-
           try { if (turf.area(clipped) < 1) continue; } catch(e){}
-
           cells.push({ r:r+1, c:c+1, geojson: clipped });
         }
       }
       return cells;
     }
 
-    // === Utility: erstes Shape aus einem GeoJSON-Layer holen ===
-    function firstShapeLayer(geojsonLayer){
-      if (!geojsonLayer) return null;
-      if (geojsonLayer.getLayers) {
-        const arr = geojsonLayer.getLayers();
-        return arr && arr.length ? arr[0] : null;
-      }
-      return geojsonLayer;
+    // Utility: alle Path-Shapes eines GeoJSON-Layers sammeln
+    function getPathChildren(geojsonLayer){
+      if (!geojsonLayer) return [];
+      if (geojsonLayer.getLayers) return geojsonLayer.getLayers().filter(l => l instanceof L.Path);
+      return (geojsonLayer instanceof L.Path) ? [geojsonLayer] : [];
     }
 
     // === Zonen/Skizzen laden ===
@@ -252,11 +281,18 @@
         layer.eachLayer(l => l._zoneId=row.id);
         zoneLayerById.set(row.id, layer);
         zoneOrigColorById.set(row.id, color);
-        layer.bindPopup(zonePopupHtml(row));
+        layer.bindPopup(zonePopupHtml(row), {
+          className: 'zone-popup',
+          maxWidth: (window.innerWidth < 800 ? Math.min(420, Math.floor(window.innerWidth*0.9)) : 420),
+          autoPan: true, keepInView: true,
+          autoPanPaddingTopLeft:  [20,  80],
+          autoPanPaddingBottomRight: [20, 140]
+        });
         layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row}})));
       });
       await loadOverlays();
     }
+
     async function loadOverlays(){
       overlays.clearLayers();
       const r = await supabase.from('storage_overlays').select('id,label,notes,color,geom,created_at').order('created_at',{ascending:true}).limit(1000);
@@ -265,7 +301,7 @@
         if (!row.geom) return;
         const gj = typeof row.geom==='string' ? JSON.parse(row.geom) : row.geom;
         const layer = L.geoJSON(gj,{style:{color:row.color||'#7cc4ff',weight:2,fillOpacity:0.0,dashArray:'6,6'}}).addTo(overlays);
-        layer.bindPopup(`<div><strong>${escapeHtml(row.label||'Skizze')}</strong><div class="hint">${row.notes?escapeHtml(row.notes):''}</div></div>`);
+        layer.bindPopup(`<div><strong>${escapeHtml(row.label||'Skizze')}</strong><div class="hint">${row.notes?escapeHtml(row.notes):''}</div></div>`, { className:'zone-popup', keepInView:true });
       });
     }
 
@@ -293,37 +329,39 @@
         </div>`;
     }
 
-    // === Transform (verschieben/drehen) toggeln + speichern ===
+    // === Transform (verschieben/drehen) – robust auf echten Path-Layern
     function enableTransformForZoneId(zoneId){
       const group = zoneLayerById.get(zoneId);
-      if (!group) return null;
-      const shape = firstShapeLayer(group);
-      if (!shape) return null;
+      if (!group) return 0;
 
-      // schon aktiv? -> ausschalten
-      if (shape.transform && shape.transform._enabled) {
-        shape.transform.disable();
-        return null;
-      }
+      const paths = getPathChildren(group);
+      if (!paths.length) return 0;
 
-      // aktivieren (Rotation an, Skalierung aus)
-      if (!shape.transform) {
-        L.extend(shape, L.Path.Transform.prototype); // falls nötig
-        shape.transform = new L.Path.Transform(shape);
-      }
-      shape.transform.enable({ rotation: true, scaling: false, draggable: true });
+      // Popup schließen, damit Handles nicht verdeckt werden
+      try { group.closePopup?.(); } catch {}
 
-      // Beim Ende der Manipulation: Speichern
-      const onEnd = async () => {
-        shape.off('transformend', onEnd);
-        const gj = group.toGeoJSON(); // ganze Gruppe (1 Feature) nach der Transformation
-        const r = await supabase.from('storage_zones').update({ geom: gj }).eq('id', zoneId);
-        if (r.error) alert('Speichern der Transformation fehlgeschlagen: ' + r.error.message);
-        else alert('Position/Ausrichtung gespeichert.');
-      };
-      shape.on('transformend', onEnd);
+      let enabled = 0;
+      paths.forEach(path => {
+        // bereits aktiv -> einmal deaktivieren (toggle)
+        if (path.transform && path.transform._enabled) {
+          path.transform.disable(); return;
+        }
+        // Plugin stellt .transform direkt bereit
+        if (!path.transform) return; // Fallback: Plugin nicht geladen?
+        path.transform.enable({ rotation:true, scaling:false, draggable:true });
+        path.bringToFront?.();
+        enabled++;
 
-      return shape;
+        const onEnd = async () => {
+          path.off('transformend', onEnd);
+          const gj = group.toGeoJSON();
+          const r = await supabase.from('storage_zones').update({ geom: gj }).eq('id', zoneId);
+          if (r.error) alert('Speichern der Transformation fehlgeschlagen: ' + r.error.message);
+          else alert('Position/Ausrichtung gespeichert.');
+        };
+        path.on('transformend', onEnd);
+      });
+      return enabled;
     }
 
     // === Zeichnen → Speichern (inkl. Grid-Aufteilung) ===
@@ -342,7 +380,7 @@
         overlays.addLayer(layer);
         const r = await supabase.from('storage_overlays').insert({ label, notes, color:'#7cc4ff', geom:gj }).select('id').single();
         if (r.error){ overlays.removeLayer(layer); return alert('Skizze speichern fehlgeschlagen: ' + r.error.message); }
-        layer.bindPopup(`<div><strong>${escapeHtml(label)}</strong>${notes?`<div class="hint">${escapeHtml(notes)}</div>`:''}</div>`);
+        layer.bindPopup(`<div><strong>${escapeHtml(label)}</strong>${notes?`<div class="hint">${escapeHtml(notes)}</div>`:''}</div>`, { className:'zone-popup', keepInView:true });
         return;
       }
 
@@ -365,10 +403,7 @@
             : splitPolygonIntoGrid(layer, rows, cols);
 
           if (cells.length){
-            const payload = cells.map(cell => ({
-              name: `${name}-${cell.c}/${cell.r}`,
-              status, color, geom: cell.geojson
-            }));
+            const payload = cells.map(cell => ({ name: `${name}-${cell.c}/${cell.r}`, status, color, geom: cell.geojson }));
             const ins = await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
             if (ins.error) return alert('Speichern (Grid) fehlgeschlagen: '+ins.error.message);
             (ins.data||[]).forEach(row => {
@@ -377,7 +412,7 @@
               l.eachLayer(x => x._zoneId=row.id);
               zoneLayerById.set(row.id, l);
               zoneOrigColorById.set(row.id, color);
-              l.bindPopup(zonePopupHtml({ id:row.id, name:row.name, status, color, created_at:row.created_at }));
+              l.bindPopup(zonePopupHtml({ id:row.id, name:row.name, status, color, created_at:row.created_at }), { className:'zone-popup', keepInView:true });
               l.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer:l,row:{ id:row.id, name:row.name, status, color, created_at:row.created_at }}})));
             });
             await loadProjects();
@@ -389,21 +424,21 @@
       }
       if (didGrid) return;
 
-      // Einzel-Zone (keine Aufteilung)
+      // Einzel-Zone
       const gj2 = layer.toGeoJSON();
       zones.addLayer(layer);
       const r2 = await supabase.from('storage_zones').insert({ name, status, color, geom:gj2 }).select('id,created_at').single();
       if (r2.error){ zones.removeLayer(layer); return alert('Speichern fehlgeschlagen: '+r2.error.message); }
       layer._zoneId = r2.data.id;
       if (layer.setStyle) layer.setStyle({ color, fillOpacity:0.3, weight:2 });
-      layer.bindPopup(zonePopupHtml({ id:r2.data.id, name, status, color, created_at:r2.data.created_at }));
+      layer.bindPopup(zonePopupHtml({ id:r2.data.id, name, status, color, created_at:r2.data.created_at }), { className:'zone-popup', keepInView:true });
       layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row:{ id:r2.data.id, name, status, color, created_at:r2.data.created_at }}})));
       zoneLayerById.set(r2.data.id, layer);
       zoneOrigColorById.set(r2.data.id, color);
       await loadProjects();
     });
 
-    // Bearbeiten (Leaflet.draw) – klassische Vertex-Änderungen
+    // Bearbeiten (Leaflet.draw)
     map.on(L.Draw.Event.EDITED, async e => {
       const updates = [];
       e.layers.eachLayer(l => { if (l._zoneId) updates.push({ id:l._zoneId, geom:l.toGeoJSON() }); });
@@ -414,7 +449,7 @@
       alert('Zonen aktualisiert.');
     });
 
-    // Löschen (nur Zonen)
+    // Löschen
     map.on(L.Draw.Event.DELETED, async e => {
       const ids = [];
       e.layers.eachLayer(l => { if (l._zoneId) ids.push(l._zoneId); });
@@ -432,13 +467,10 @@
       const { layer, row } = ev.detail;
       const el = layer.getPopup()?.getElement(); if (!el) return;
 
-      // Transform-Button verdrahten
       el.querySelector('.btn-transform')?.addEventListener('click', async () => {
         if (!currentUser) return alert('Bitte einloggen.');
-        const shape = enableTransformForZoneId(row.id);
-        if (!shape) return; // wurde ausgeschaltet
-        // beim Schließen des Popups Transform aus
-        layer.once('popupclose', () => { try{ shape.transform.disable(); }catch{} });
+        const count = enableTransformForZoneId(row.id);
+        if (!count) alert('Konnte Transform nicht aktivieren. Prüfe, ob das Transform-Plugin geladen ist.');
       });
 
       await populateItems(row.id, el.querySelector('#items-'+row.id));
@@ -460,7 +492,7 @@
     async function populateItems(zoneId, container){
       if (!container) return;
       container.innerHTML = '<span class="hint">Lade Artikel…</span>';
-      const r = await supabase.from('storage_items').select('id,name,qty,unit,notes,created_at').eq('zone_id', zoneId).order('created_at',{ascending:true});
+      const r = await supabase.from('storage_items').select('id,article_number,name,qty,unit,notes,created_at').eq('zone_id', zoneId).order('created_at',{ascending:true});
       if (r.error) return container.innerHTML = '<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
       const data = r.data||[];
       if (!data.length) return container.innerHTML = '<span class="hint">Keine Artikel vorhanden.</span>';
@@ -472,9 +504,10 @@
             <button class="btn-edit-item" data-id="${it.id}">Bearbeiten</button>
             <button class="btn-del-item" data-id="${it.id}">Löschen</button>
           </div>` : '';
+        const head = it.article_number ? `<span class="tag">${escapeHtml(it.article_number)}</span> ` : '';
         return `<div class="item-row" data-id="${it.id}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
           <div>
-            <div><strong>${escapeHtml(it.name)}</strong> ${qty}</div>
+            <div>${head}<strong>${escapeHtml(it.name)}</strong> ${qty}</div>
             ${notes}
           </div>
           ${actions}
@@ -492,24 +525,51 @@
         }));
       }
     }
+
+    // Artikelstamm (Cache für Auto-Fill)
+    let itemCatalogByNumber = new Map();
+    async function loadItemCatalog(){
+      const r = await supabase.from('item_catalog').select('article_number,name,manufacturer').order('name');
+      if (r.error){ console.warn('Katalog laden:', r.error); itemCatalogByNumber = new Map(); return; }
+      itemCatalogByNumber = new Map((r.data||[]).filter(x=>x.article_number).map(x => [String(x.article_number).trim(), x]));
+    }
+
     async function addItem(zoneId){
-      const name = prompt('Artikel/Bezeichnung:'); if (!name) return;
+      await loadItemCatalog();
+      let article_number = prompt('Artikelnummer (optional):','') || '';
+      article_number = article_number.trim();
+
+      let name = '';
+      const cat = article_number ? itemCatalogByNumber.get(article_number) : null;
+      if (cat){ name = cat.name || ''; }
+
+      name = prompt('Artikel/Bezeichnung:', name || '') || name;
       const qtyStr = prompt('Menge (Zahl):','1'); const qty = qtyStr ? Number(qtyStr) : null;
       const unit = prompt('Einheit (z. B. Stk, Paletten, m²):','Stk') || null;
       const notes = prompt('Notizen (optional):') || null;
-      const r = await supabase.from('storage_items').insert({ zone_id: zoneId, name, qty, unit, notes });
+
+      const r = await supabase.from('storage_items').insert({ zone_id: zoneId, article_number: article_number || null, name, qty, unit, notes });
       if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
     }
+
     async function editItem(itemId){
+      await loadItemCatalog();
       const r = await supabase.from('storage_items').select('*').eq('id', itemId).single();
       if (r.error) return alert('Laden fehlgeschlagen: ' + r.error.message);
       const d = r.data;
-      let name = prompt('Artikel/Bezeichnung:', d.name); if (name===null) name=d.name;
-      let qtyStr = prompt('Menge (Zahl):', (d.qty ?? '')===' ' ? '' : d.qty); if (qtyStr===null) qtyStr = (d.qty ?? '')===' ' ? '' : String(d.qty);
+      let article_number = prompt('Artikelnummer:', d.article_number || '') ?? d.article_number;
+      article_number = (article_number||'').trim();
+      let nameDefault = d.name || '';
+      const cat = article_number ? itemCatalogByNumber.get(article_number) : null;
+      if (cat && !nameDefault) nameDefault = cat.name || '';
+
+      let name = prompt('Artikel/Bezeichnung:', nameDefault) ?? nameDefault;
+      let qtyStr = prompt('Menge (Zahl):', d.qty ?? ''); if (qtyStr===null) qtyStr = String(d.qty ?? '');
       const qty = qtyStr!=='' ? Number(qtyStr) : null;
-      let unit = prompt('Einheit:', d.unit || ''); if (unit===null) unit=d.unit;
-      let notes = prompt('Notizen:', d.notes || ''); if (notes===null) notes=d.notes;
-      const u = await supabase.from('storage_items').update({ name, qty, unit, notes }).eq('id', itemId);
+      let unit = prompt('Einheit:', d.unit || '') ?? d.unit;
+      let notes = prompt('Notizen:', d.notes || '') ?? d.notes;
+
+      const u = await supabase.from('storage_items').update({ article_number: article_number || null, name, qty, unit, notes }).eq('id', itemId);
       if (u.error) alert('Update fehlgeschlagen: ' + u.error.message);
     }
 
@@ -519,7 +579,7 @@
       const r = await supabase.from('projects').select('id,name').order('name');
       if (r.error){ console.warn('Projekt-Ladefehler', r.error); return; }
       allProjects = (r.data||[]).map(p => ({id:p.id, name:p.name}));
-      rebuildProjectOptions(); // Dropdown aus allProjects befüllen (mit evtl. aktivem Suchtext)
+      rebuildProjectOptions();
     }
 
     function rebuildProjectOptions(){
@@ -563,7 +623,7 @@
           const id = b.getAttribute('data-id');
           const d = await supabase.from('zone_projects').delete().eq('id', id);
           if (d.error) return alert('Entfernen fehlgeschlagen: ' + d.error.message);
-          await cleanupOrphanProjects();  // nach Entfernen aufräumen
+          await cleanupOrphanProjects();
           await populateZoneProjects(zoneId, container);
           await loadProjects();
         }));
@@ -626,7 +686,7 @@
       });
     }
 
-    // === Orphan-Projects entfernen (keine Zone verknüpft) ===
+    // === Orphan-Projects entfernen ===
     async function cleanupOrphanProjects(){
       const proj = await supabase.from('projects').select('id');
       if (proj.error){ console.warn('Cleanup/Projects:', proj.error); return; }
@@ -638,6 +698,80 @@
         const del = await supabase.from('projects').delete().in('id', orphans);
         if (del.error){ console.warn('Cleanup/Delete:', del.error); }
       }
+    }
+
+    // === CSV Upload (Artikelstamm) ===
+    document.getElementById('btn-upload-csv').addEventListener('click', () => {
+      if (!currentUser) return alert('Bitte einloggen.');
+      document.getElementById('csv-input').value = '';
+      document.getElementById('csv-input').click();
+    });
+    document.getElementById('csv-input').addEventListener('change', async (ev) => {
+      const file = ev.target.files?.[0]; if (!file) return;
+      Papa.parse(file, {
+        header: true, skipEmptyLines: true,
+        complete: async (results) => {
+          try{
+            const norm = s => (s||'').toString().trim();
+            const rows = (results.data||[]).map(r => {
+              const map = {}; for (const [k,v] of Object.entries(r)) map[k.toString().trim().toLowerCase()] = norm(v);
+              const article_number = map['artikelnummer'] || map['artnr'] || map['artikel'] || '';
+              const name = map['name'] || map['bezeichnung'] || '';
+              const manufacturer = map['hersteller'] || map['lieferant'] || '';
+              return { article_number: article_number||null, name: name||null, manufacturer: manufacturer||null };
+            }).filter(x => x.article_number || x.name);
+            if (!rows.length) return alert('Keine verwertbaren Zeilen gefunden.');
+            const up = await supabase.from('item_catalog').upsert(rows, { onConflict: 'article_number' });
+            if (up.error) return alert('CSV-Import fehlgeschlagen: ' + up.error.message);
+            alert('Artikelstamm importiert/aktualisiert: ' + rows.length + ' Zeilen.');
+          }catch(err){ alert('CSV-Parsing-Fehler: ' + err.message); }
+        }
+      });
+    });
+
+    // === Artikel-Liste (Modal) ===
+    elBtnOverview.addEventListener('click', async () => {
+      await showItemsOverview();
+      elItemsModal.style.display = 'flex';
+    });
+    elItemsClose.addEventListener('click', () => { elItemsModal.style.display = 'none'; });
+
+    async function showItemsOverview(){
+      await loadItemCatalog();
+      const r = await supabase.from('storage_items').select('article_number,name,qty,unit');
+      if (r.error){ elItemsTableWrap.innerHTML = '<div class="hint">Fehler: '+escapeHtml(r.error.message)+'</div>'; return; }
+      const list = r.data||[];
+      const agg = new Map();
+      for (const it of list){
+        const key = (it.article_number || it.name || '—').toString().trim().toLowerCase();
+        const row = agg.get(key) || { article_number: it.article_number || null, name: it.name || null, manufacturer: null, qty: 0, units:new Set() };
+        const q = typeof it.qty === 'number' ? it.qty : (it.qty ? Number(it.qty) : 0);
+        if (!isNaN(q)) row.qty += q;
+        if (it.unit) row.units.add(it.unit);
+        if (row.article_number && itemCatalogByNumber.has(row.article_number)){
+          const cat = itemCatalogByNumber.get(row.article_number);
+          row.name = row.name || cat.name || row.name;
+          row.manufacturer = cat.manufacturer || row.manufacturer;
+        }
+        agg.set(key, row);
+      }
+      const rows = Array.from(agg.values()).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+      elItemsTableWrap.innerHTML = `
+        <table class="table">
+          <thead>
+          <tr><th style="width:140px">Artikelnummer</th><th>Name</th><th style="width:220px">Hersteller</th><th style="width:140px">Gesamtmenge</th><th style="width:120px">Einheit(en)</th></tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td>${r.article_number ? escapeHtml(r.article_number) : '<span class="hint">–</span>'}</td>
+                <td>${r.name ? escapeHtml(r.name) : '<span class="hint">(ohne Name)</span>'}</td>
+                <td>${r.manufacturer ? escapeHtml(r.manufacturer) : '<span class="hint">–</span>'}</td>
+                <td>${Number(r.qty).toLocaleString()}</td>
+                <td>${r.units.size ? escapeHtml(Array.from(r.units).join(', ')) : '<span class="hint">–</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
     }
   </script>
 </body>
