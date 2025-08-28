@@ -96,7 +96,7 @@
     window.addEventListener('resize', function(){ map.invalidateSize(); });
 
     const zones = L.featureGroup().addTo(map);
-    const overlays = L.featureGroup().addTo(map); // gestrichelte Skizzen
+    const overlays = L.featureGroup().addTo(map);
     const zoneLayerById = new Map();
 
     // === Zeichnen/Bearbeiten ===
@@ -159,7 +159,7 @@
       await loadProjects();
     })();
 
-    // === Daten-Helpers ===
+    // === Helpers ===
     function statusColor(status){
       return status === 'frei' ? '#4caf50' : (status === 'reserviert' ? '#ff9800' : '#f44336');
     }
@@ -167,19 +167,20 @@
       return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
     }
 
+    // === Zonen laden ===
     async function loadZones(){
       zones.clearLayers(); zoneLayerById.clear();
-      var r = await supabase.from('storage_zones').select('id,name,status,color,geom,created_by,created_at').order('created_at', { ascending: true }).limit(1000);
-      if (r.error) { console.error(r.error); alert('Fehler beim Laden: ' + r.error.message); return; }
-      (r.data || []).forEach(function(row){
+      var r = await supabase.from('storage_zones').select('id,name,status,color,geom,created_by,created_at').order('created_at',{ascending:true}).limit(1000);
+      if (r.error) { console.error(r.error); alert('Fehler beim Laden: '+r.error.message); return; }
+      (r.data||[]).forEach(function(row){
         if (!row.geom) return;
-        var gj = (typeof row.geom === 'string') ? JSON.parse(row.geom) : row.geom;
-        var layer = L.geoJSON(gj, { style: { color: row.color || statusColor(row.status), weight: 2, fillOpacity: 0.3 } }).addTo(zones);
-        layer.eachLayer(function(l){ l._zoneId = row.id; });
-        zoneLayerById.set(row.id, layer);
+        var gj = (typeof row.geom === 'string')?JSON.parse(row.geom):row.geom;
+        var layer = L.geoJSON(gj,{style:{color:row.color||statusColor(row.status),weight:2,fillOpacity:0.3}}).addTo(zones);
+        layer.eachLayer(function(l){ l._zoneId=row.id; });
+        zoneLayerById.set(row.id,layer);
         layer.bindPopup(zonePopupHtml(row));
-        layer.on('popupopen', function(){
-          var ev = new CustomEvent('popupopen-for-zone', { detail: { layer: layer, row: row } });
+        layer.on('popupopen',function(){
+          var ev=new CustomEvent('popupopen-for-zone',{detail:{layer:layer,row:row}});
           document.dispatchEvent(ev);
         });
       });
@@ -188,244 +189,59 @@
 
     async function loadOverlays(){
       overlays.clearLayers();
-      var r = await supabase.from('storage_overlays').select('id,label,notes,color,geom,created_by,created_at').order('created_at', { ascending: true }).limit(1000);
-      if (r.error) { console.warn('Overlays laden:', r.error.message); return; }
-      (r.data || []).forEach(function(row){
+      var r = await supabase.from('storage_overlays').select('id,label,notes,color,geom,created_by,created_at').order('created_at',{ascending:true}).limit(1000);
+      if (r.error) { console.warn('Overlays laden:',r.error.message); return; }
+      (r.data||[]).forEach(function(row){
         if (!row.geom) return;
-        var gj = (typeof row.geom === 'string') ? JSON.parse(row.geom) : row.geom;
-        var layer = L.geoJSON(gj, { style: { color: row.color || '#7cc4ff', weight: 2, fillOpacity: 0.0, dashArray: '6,6' } }).addTo(overlays);
-        layer.bindPopup('<div><strong>'+escapeHtml(row.label || 'Skizze')+'</strong><div class="hint">'+(row.notes ? escapeHtml(row.notes) : '')+'</div></div>');
+        var gj=(typeof row.geom==='string')?JSON.parse(row.geom):row.geom;
+        var layer=L.geoJSON(gj,{style:{color:row.color||'#7cc4ff',weight:2,fillOpacity:0.0,dashArray:'6,6'}}).addTo(overlays);
+        layer.bindPopup('<div><strong>'+escapeHtml(row.label||'Skizze')+'</strong><div class="hint">'+(row.notes?escapeHtml(row.notes):'')+'</div></div>');
       });
     }
 
     function zonePopupHtml(row){
-      var addBtn = currentUser ? '<button class="btn-add-project" data-zone="'+row.id+'">+ Projekt</button>' : '';
-      return (
-        '<div>'+
-          '<strong>'+escapeHtml(row.name || 'Zone')+'</strong><br>'+
-          '<small class="hint">Status: '+escapeHtml(row.status || '—')+'</small>'+
-          '<div class="hint">Erstellt: '+new Date(row.created_at).toLocaleString()+'</div>'+
-          '<hr style="border-color:#1d2735">'+
-          '<div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">'+
-            '<div class="hint">Projekte in dieser Zone</div>'+ addBtn +
-          '</div>'+
-          '<div id="projects-'+row.id+'" class="projects" style="margin:.5rem 0"></div>'+
-          '<div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">'+
-            '<div class="hint">Artikel in dieser Zone</div>'+
-            (currentUser ? '<button class="btn-add-item" data-zone="'+row.id+'">+ Artikel</button>' : '')+
-          '</div>'+
-          '<div id="items-'+row.id+'" class="items" style="margin-top:.5rem"></div>'+
-        '</div>'
-      );
+      var addBtn=currentUser?'<button class="btn-add-project" data-zone="'+row.id+'">+ Projekt</button>':'';
+      return '<div>'+\
+        '<strong>'+escapeHtml(row.name||'Zone')+'</strong><br>'+\
+        '<small class="hint">Status: '+escapeHtml(row.status||'—')+'</small>'+\
+        '<div class="hint">Erstellt: '+new Date(row.created_at).toLocaleString()+'</div>'+\
+        '<hr style="border-color:#1d2735">'+\
+        '<div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">'+\
+          '<div class="hint">Projekte in dieser Zone</div>'+addBtn+\
+        '</div>'+\
+        '<div id="projects-'+row.id+'" class="projects" style="margin:.5rem 0"></div>'+\
+        '<div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">'+\
+          '<div class="hint">Artikel in dieser Zone</div>'+\
+          (currentUser?'<button class="btn-add-item" data-zone="'+row.id+'">+ Artikel</button>':'')+\
+        '</div>'+\
+        '<div id="items-'+row.id+'" class="items" style="margin-top:.5rem"></div>'+\
+      '</div>';
     }
 
-    // Zeichnen → Speichern
-    map.on(L.Draw.Event.CREATED, async function(e){
+    // === Zeichnen → Speichern ===
+    map.on(L.Draw.Event.CREATED,async function(e){
       if (!currentUser) { alert('Bitte vorher einloggen.'); return; }
-      var layer = e.layer;
-      var inside = BOUNDS.contains(layer.getBounds ? layer.getBounds() : layer.getLatLng());
+      var layer=e.layer;
+      var inside=BOUNDS.contains(layer.getBounds?layer.getBounds():layer.getLatLng());
       if (!inside) { alert('Form liegt außerhalb des Grundstücks.'); return; }
-      var sketch = document.getElementById('sketch-mode').checked;
-
+      var sketch=document.getElementById('sketch-mode').checked;
       if (sketch){
-        var label = prompt('Bezeichnung der Skizze (z.B. Baustellenzufahrt):') || 'Skizze';
-        var notes = prompt('Notizen (optional):') || null;
-        var gj = layer.toGeoJSON();
-        if (layer.setStyle) layer.setStyle({ color:'#7cc4ff', weight:2, fillOpacity:0.0, dashArray:'6,6' });
+        var label=prompt('Bezeichnung der Skizze (z.B. Baustellenzufahrt):')||'Skizze';
+        var notes=prompt('Notizen (optional):')||null;
+        var gj=layer.toGeoJSON();
+        if (layer.setStyle) layer.setStyle({color:'#7cc4ff',weight:2,fillOpacity:0.0,dashArray:'6,6'});
         overlays.addLayer(layer);
-        var r = await supabase.from('storage_overlays').insert({ label:label, notes:notes, color:'#7cc4ff', geom:gj }).select('id').single();
-        if (r.error) { alert('Skizze speichern fehlgeschlagen: ' + r.error.message); overlays.removeLayer(layer); return; }
-        layer.bindPopup('<div><strong>'+escapeHtml(label)+'</strong>'+ (notes?('<div class="hint">'+escapeHtml(notes)+'</div>'):'') +'</div>');
+        var r=await supabase.from('storage_overlays').insert({label:label,notes:notes,color:'#7cc4ff',geom:gj}).select('id').single();
+        if (r.error){ alert('Skizze speichern fehlgeschlagen: '+r.error.message); overlays.removeLayer(layer); return; }
+        layer.bindPopup('<div><strong>'+escapeHtml(label)+'</strong>'+(notes?('<div class="hint">'+escapeHtml(notes)+'</div>'):'')+'</div>');
       } else {
-        var name = prompt('Name der Zone (z.B. A1):'); if (name === null) return;
-        var status = prompt('Status (frei/reserviert/belegt):', 'frei') || 'frei';
-        var color = statusColor(status);
-        var gj2 = layer.toGeoJSON();
+        var name=prompt('Name der Zone (z.B. A1):'); if (name===null) return;
+        var status=prompt('Status (frei/reserviert/belegt):','frei')||'frei';
+        var color=statusColor(status);
+        var gj2=layer.toGeoJSON();
         zones.addLayer(layer);
-        var r2 = await supabase.from('storage_zones').insert({ name:name, status:status, color:color, geom:gj2 }).select('id,created_at').single();
-        if (r2.error) { alert('Speichern fehlgeschlagen: ' + r2.error.message); zones.removeLayer(layer); return; }
-        layer._zoneId = r2.data.id;
-        if (layer.setStyle) layer.setStyle({ color:color, fillOpacity:0.3, weight:2 });
-        layer.bindPopup(zonePopupHtml({ id:r2.data.id, name:name, status:status, color:color, created_at:r2.data.created_at }));
-        zoneLayerById.set(r2.data.id, layer);
-      }
-    });
-
-    // Bearbeiten → Aktualisieren
-    map.on(L.Draw.Event.EDITED, async function(e){
-      var layers = e.layers; var updates = [];
-      layers.eachLayer(function(layer){ if (layer._zoneId){ updates.push({ id:layer._zoneId, geom: layer.toGeoJSON() }); }});
-      for (var i=0;i<updates.length;i++){
-        var u = updates[i];
-        var r = await supabase.from('storage_zones').update({ geom: u.geom }).eq('id', u.id);
-        if (r.error) { alert('Update fehlgeschlagen: ' + r.error.message); return; }
-      }
-      alert('Zonen aktualisiert.');
-    });
-
-    // Löschen → Entfernen
-    map.on(L.Draw.Event.DELETED, async function(e){
-      var layers = e.layers; var ids = [];
-      layers.eachLayer(function(layer){ if (layer._zoneId) ids.push(layer._zoneId); });
-      if (!ids.length) return;
-      var r = await supabase.from('storage_zones').delete().in('id', ids);
-      if (r.error) { alert('Löschen fehlgeschlagen: ' + r.error.message); return; }
-      // Skizzen werden über das Löschwerkzeug nicht automatisch erkannt, daher separate UI wäre nötig
-      alert('Zonen gelöscht.');
-      ids.forEach(function(id){ zoneLayerById.delete(id); });(function(id){ zoneLayerById.delete(id); });
-    });
-
-    // === Items (Artikel) ===
-    document.addEventListener('popupopen-for-zone', async function(ev){
-      var layer = ev.detail.layer; var row = ev.detail.row;
-      var popupEl = layer.getPopup() ? layer.getPopup().getElement() : null;
-      if (!popupEl) return;
-      await populateItems(row.id, popupEl.querySelector('#items-'+row.id));
-      await populateZoneProjects(row.id, popupEl.querySelector('#projects-'+row.id));
-      var btnAdd = popupEl.querySelector('.btn-add-item');
-      if (btnAdd) btnAdd.addEventListener('click', async function(){
-        if (!currentUser) { alert('Bitte einloggen.'); return; }
-        await addItem(row.id);
-        await populateItems(row.id, popupEl.querySelector('#items-'+row.id));
-      });
-      var btnAddProject = popupEl.querySelector('.btn-add-project');
-      if (btnAddProject) btnAddProject.addEventListener('click', async function(){
-        if (!currentUser) { alert('Bitte einloggen.'); return; }
-        await addProjectToZone(row.id);
-        await populateZoneProjects(row.id, popupEl.querySelector('#projects-'+row.id));
-        await loadProjects();
-      });
-    });
-
-    async function populateItems(zoneId, container){
-      if (!container) return;
-      container.innerHTML = '<span class="hint">Lade Artikel…</span>';
-      var r = await supabase.from('storage_items').select('id,name,qty,unit,notes,created_by,created_at').eq('zone_id', zoneId).order('created_at', { ascending: true });
-      if (r.error) { container.innerHTML = '<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>'; return; }
-      var data = r.data || [];
-      if (!data.length){ container.innerHTML = '<span class="hint">Keine Artikel vorhanden.</span>'; return; }
-      container.innerHTML = data.map(function(item){
-        var qtyPart = (item.qty !== null && item.qty !== undefined) ? ('&times; '+Number(item.qty)+' '+(item.unit ? escapeHtml(item.unit) : '')) : '';
-        var notesPart = item.notes ? ('<div class="hint">'+escapeHtml(item.notes)+'</div>') : '';
-        var actions = currentUser ? '<div class="row">\
-            <button class="btn-edit-item" data-id="'+item.id+'">Bearbeiten</button>\
-            <button class="btn-del-item" data-id="'+item.id+'">Löschen</button>\
-          </div>' : '';
-        return '<div class="item-row" data-id="'+item.id+'" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">\
-          <div>\
-            <div><strong>'+escapeHtml(item.name)+'</strong> '+qtyPart+'</div>\
-            '+notesPart+'\
-          </div>\
-          '+actions+'\
-        </div>';
-      }).join('');
-      if (currentUser){
-        var edits = container.querySelectorAll('.btn-edit-item');
-        edits.forEach(function(btn){ btn.addEventListener('click', async function(){
-          var id = btn.getAttribute('data-id'); await editItem(id); await populateItems(zoneId, container);
-        }); });
-        var dels = container.querySelectorAll('.btn-del-item');
-        dels.forEach(function(btn){ btn.addEventListener('click', async function(){
-          var id = btn.getAttribute('data-id'); if (!confirm('Diesen Artikel löschen?')) return; var r2 = await supabase.from('storage_items').delete().eq('id', id); if (r2.error){ alert('Löschen fehlgeschlagen: ' + r2.error.message); return; } await populateItems(zoneId, container);
-        }); });
-      }
-    }
-
-    async function addItem(zoneId){
-      var name = prompt('Artikel/Bezeichnung:'); if (!name) return;
-      var qtyStr = prompt('Menge (Zahl):', '1'); var qty = qtyStr ? Number(qtyStr) : null;
-      var unit = prompt('Einheit (z. B. Stk, Paletten, m²):', 'Stk') || null;
-      var notes = prompt('Notizen (optional):') || null;
-      var r = await supabase.from('storage_items').insert({ zone_id: zoneId, name: name, qty: qty, unit: unit, notes: notes });
-      if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
-    }
-
-    async function editItem(itemId){
-      var r = await supabase.from('storage_items').select('*').eq('id', itemId).single();
-      if (r.error) { alert('Laden fehlgeschlagen: ' + r.error.message); return; }
-      var d = r.data;
-      var name = prompt('Artikel/Bezeichnung:', d.name); if (name === null) name = d.name;
-      var qtyStr = prompt('Menge (Zahl):', (d.qty !== null && d.qty !== undefined) ? d.qty : ''); if (qtyStr === null) qtyStr = (d.qty !== null && d.qty !== undefined) ? String(d.qty) : '';
-      var qty = qtyStr !== '' ? Number(qtyStr) : null;
-      var unit = prompt('Einheit:', d.unit || ''); if (unit === null) unit = d.unit;
-      var notes = prompt('Notizen:', d.notes || ''); if (notes === null) notes = d.notes;
-      var u = await supabase.from('storage_items').update({ name:name, qty:qty, unit:unit, notes:notes }).eq('id', itemId);
-      if (u.error) alert('Update fehlgeschlagen: ' + u.error.message);
-    }
-
-    // === Projekte ===
-    async function loadProjects(){
-      var sel = elProjectFilter; if (!sel) return;
-      var r = await supabase.from('projects').select('id,name').order('name');
-      if (r.error) { console.warn('Projekt-Ladefehler', r.error); return; }
-      var current = sel.value;
-      sel.innerHTML = '<option value="">— Projekt wählen —</option>' + (r.data || []).map(function(p){ return '<option value="'+p.id+'">'+escapeHtml(p.name)+'</option>'; }).join('');
-      if (current) sel.value = current;
-    }
-
-    elProjectFilter.addEventListener('change', async function(e){
-      var projectId = e.target.value;
-      zoneLayerById.forEach(function(layer){ if (layer.setStyle) layer.setStyle({ weight:2, opacity:1 }); });
-      if (!projectId) return;
-      var r = await supabase.from('zone_projects').select('zone_id').eq('project_id', projectId);
-      if (r.error) { alert('Projekt-Suche fehlgeschlagen: ' + r.error.message); return; }
-      var ids = (r.data || []).map(function(d){ return d.zone_id; });
-      if (!ids.length) { alert('Für dieses Projekt sind keine Zonen hinterlegt.'); return; }
-      var bounds = null;
-      ids.forEach(function(id){
-        var layer = zoneLayerById.get(id);
-        if (layer){
-          if (layer.setStyle) layer.setStyle({ weight:4, opacity:1 });
-          try {
-            var b = layer.getBounds();
-            bounds = bounds ? bounds.extend(b) : b;
-          } catch(e){}
-        }
-      });
-      if (bounds){ try { map.fitBounds(bounds, { padding:[40,40] }); } catch(e){} }
-    });
-
-    async function populateZoneProjects(zoneId, container){
-      if (!container) return;
-      container.innerHTML = '<span class="hint">Lade Projekte…</span>';
-      var r = await supabase.from('zone_projects').select('id, project:projects(id,name)').eq('zone_id', zoneId).order('created_at', { ascending: true });
-      if (r.error) { container.innerHTML = '<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>'; return; }
-      var data = r.data || [];
-      if (!data.length) { container.innerHTML = '<span class="hint">Keine Projekte zugeordnet.</span>'; return; }
-      container.innerHTML = data.map(function(zp){
-        var removeBtn = currentUser ? '<button class="btn-remove-project" data-id="'+zp.id+'">Entfernen</button>' : '';
-        return '<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">\
-          <div><strong>'+escapeHtml((zp.project && zp.project.name) ? zp.project.name : 'Projekt')+'</strong></div>\
-          '+removeBtn+'\
-        </div>';
-      }).join('');
-      if (currentUser){
-        var btns = container.querySelectorAll('.btn-remove-project');
-        btns.forEach(function(btn){ btn.addEventListener('click', async function(){
-          var id = btn.getAttribute('data-id');
-          var d = await supabase.from('zone_projects').delete().eq('id', id);
-          if (d.error) { alert('Entfernen fehlgeschlagen: ' + d.error.message); return; }
-          await populateZoneProjects(zoneId, container);
-          await loadProjects();
-        }); });
-      }
-    }
-
-    async function addProjectToZone(zoneId){
-      var name = prompt('Projektname (neu oder bestehend):');
-      if (!name) return; name = name.trim();
-      var existing = await supabase.from('projects').select('id').ilike('name', name).limit(1);
-      if (existing.error) { alert('Suche fehlgeschlagen: ' + existing.error.message); return; }
-      var projectId = (existing.data && existing.data[0]) ? existing.data[0].id : null;
-      if (!projectId){
-        var created = await supabase.from('projects').insert({ name: name }).select('id').single();
-        if (created.error) { alert('Projekt anlegen fehlgeschlagen: ' + created.error.message); return; }
-        projectId = created.data.id;
-      }
-      var link = await supabase.from('zone_projects').insert({ zone_id: zoneId, project_id: projectId });
-      if (link.error) { alert('Zuordnung fehlgeschlagen: ' + link.error.message); return; }
-      alert('Projekt zugeordnet.');
-    }
-  </script>
-</body>
-</html>
+        var r2=await supabase.from('storage_zones').insert({name:name,status:status,color:color,geom:gj2}).select('id,created_at').single();
+        if (r2.error){ alert('Speichern fehlgeschlagen: '+r2.error.message); zones.removeLayer(layer); return; }
+        layer._zoneId=r2.data.id;
+        if (layer.setStyle) layer.setStyle({color:color,fillOpacity:0.3,weight:2});
+        layer.bindPopup(zonePopupHtml({id:r2.data.id,name:name,status:status,color:
