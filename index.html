@@ -23,7 +23,7 @@
     button { background: #1e2a3d; color: var(--text); border: 1px solid #2b3b55; border-radius: .5rem; padding: .5rem .75rem; cursor: pointer; }
     button:hover { filter: brightness(1.1); }
 
-    #map { height: calc(100vh - 64px); width: 100%; }
+    #map { height: calc(100vh - 120px); width: 100%; }
     .leaflet-container { background: #0a0e13; }
     .legend { position: fixed; right: .75rem; bottom: .75rem; background: var(--panel); border: 1px solid #1d2735; border-radius: .75rem; padding: .5rem .75rem; font-size: .85rem; color: var(--muted); }
     .legend .dot { display:inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .4rem; vertical-align: middle; }
@@ -78,6 +78,9 @@
     );
 
     const map = L.map('map', { maxBounds: BOUNDS, maxBoundsViscosity: 1.0 }).setView(KERPEN, 19);
+    // Falls die Kopfzeile höher ist und Leaflet initial falsch misst
+    setTimeout(() => map.invalidateSize(), 200);
+    window.addEventListener('resize', () => map.invalidateSize());
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap-Mitwirkende'
