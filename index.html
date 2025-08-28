@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lagerzonen — Boschstraße 60a, 50171 Kerpen</title>
+  <title>Lagerzonen — Boschstraße 60a</title>
 
   <!-- Leaflet & Leaflet.draw -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -11,12 +11,11 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
-  <!-- Turf.js für Polygon-Teilung -->
-  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <!-- Drag entire shapes -->
+  <script src="https://unpkg.com/leaflet-path-drag@0.0.7/Leaflet.Path.Drag.js"></script>
 
-  <!-- Path Transform (Verschieben / Drehen) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-path-transform@1.8.0/dist/L.Path.Transform.css" />
-  <script src="https://unpkg.com/leaflet-path-transform@1.8.0/dist/L.Path.Transform.js"></script>
+  <!-- Turf.js (Polygon-Teilung + Rotation) -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
   <!-- PapaParse für CSV -->
   <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
@@ -25,16 +24,14 @@
     :root{
       --bg:#0b0f14; --panel:#101620; --text:#e7edf6; --muted:#9bb0c7;
       --line:#1b2737; --accent:#7cc4ff; --btn:#141c28;
-      --radius:.6rem; --pad:.6rem;
+      --radius:.6rem;
     }
     *{ box-sizing:border-box; }
-    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu;
-      background:var(--bg); color:var(--text); }
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu; background:var(--bg); color:var(--text); }
 
     /* Minimal Header */
     header{
-      position:sticky; top:0; z-index:1000;
-      background:var(--panel); border-bottom:1px solid var(--line);
+      position:sticky; top:0; z-index:1000; background:var(--panel); border-bottom:1px solid var(--line);
       padding:.5rem .75rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;
     }
     h1{ font-size:.95rem; margin:0; font-weight:600; letter-spacing:.2px; opacity:.9 }
@@ -53,12 +50,13 @@
     button:hover{ filter:brightness(1.08); }
     button.icon{ width:2.1rem; height:2.1rem; display:inline-grid; place-items:center; padding:0; }
 
-    /* Karte & Legende */
-    #map{ height:calc(100vh - 140px); width:100%; }
-    .leaflet-container{ background:#0a0e13; }
+    #map{ height:calc(100vh - 160px); width:100%; }
+    .leaflet-container{ background:#0a0e13; will-change: transform; }
+    .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; will-change: transform; }
+    .leaflet-tile{ image-rendering:-webkit-optimize-contrast; }
     .legend{
       position:fixed; right:.6rem; bottom:.6rem; background:var(--panel); border:1px solid var(--line);
-      border-radius:var(--radius); padding:.4rem .55rem; font-size:.82rem; color:var(--muted);
+      border-radius:var(--radius); padding:.4rem .55rem; font-size:.82rem; color:var(--muted); z-index:1100;
     }
     .legend .dot{ display:inline-block; width:.75rem; height:.75rem; border-radius:2px; margin-right:.35rem; vertical-align:middle; }
     .hint{ color:var(--muted); font-size:.85rem; }
@@ -69,26 +67,31 @@
       100%{filter:drop-shadow(0 0 0 var(--accent));} }
     .zone-glow path,.zone-glow polygon,.zone-glow .leaflet-interactive{ animation:glowPulse 1.2s ease-in-out 2; }
 
-    /* Transform-Handles */
-    .leaflet-transform-resizable .leaflet-transform-handle{ width:12px; height:12px; border-radius:3px; }
-    .leaflet-transform-rotatable .leaflet-transform-rotate{ width:14px; height:14px; border-radius:50%; }
-
     /* Responsive Popup */
     .zone-popup .leaflet-popup-content{ max-height:60vh; overflow:auto; }
     .zone-popup{ max-width:90vw !important; }
     @media (min-width:800px){ .zone-popup{ max-width:420px !important; } }
 
-    /* Schwarz/Weiß-Karte – per Klasse am Map-Container */
-    .grayscale .leaflet-tile{
-      filter: grayscale(1) contrast(1.05) brightness(0.95);
+    /* S/W Karte – per Klasse am Map-Element */
+    .grayscale .leaflet-tile{ filter: grayscale(1) contrast(1.05) brightness(0.95); }
+
+    /* Login-Overlay */
+    #login-overlay{
+      position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:2000;
     }
+    #login-card{
+      width:min(420px, 92vw); background:var(--panel); border:1px solid var(--line); border-radius:.9rem; padding:1rem;
+    }
+    #admin-panel{ display:none; margin-top:.75rem; border-top:1px solid var(--line); padding-top:.75rem; }
+    #users-table th, #users-table td{ border-bottom:1px solid var(--line); padding:.35rem .4rem; text-align:left; }
+    #users-table{ width:100%; border-collapse:collapse; font-size:.9rem; }
   </style>
 </head>
 <body>
   <header>
     <h1>📦 Lagerzonen</h1>
 
-    <!-- links: Projektwahl + Suche -->
+    <!-- Projektwahl + Suche -->
     <div class="row">
       <select id="project-filter" title="Projekt wählen" style="min-width:200px">
         <option value="">Projekt…</option>
@@ -99,7 +102,6 @@
 
     <div class="sp"></div>
 
-    <!-- Mitte: Karten- und Zeichen-Optionen -->
     <div class="row">
       <label class="row" title="Skizzenmodus (gestrichelt)">
         <input id="sketch-mode" type="checkbox" /><span class="hint">Skizze</span>
@@ -111,18 +113,18 @@
 
     <div class="sp"></div>
 
-    <!-- rechts: Items, CSV, Refresh, Auth -->
     <div class="row">
       <button id="btn-items-overview" class="ghost" title="Artikel-Liste">📋</button>
       <input id="csv-input" type="file" accept=".csv,text/csv" style="display:none" />
       <button id="btn-upload-csv" class="ghost" title="CSV Artikelstamm hochladen">⬆</button>
       <button id="refresh" class="ghost" title="Aktualisieren">🔄</button>
+      <button id="btn-users" class="ghost" title="Nutzer verwalten (Admin)" style="display:none">👤</button>
       <span id="signed-out" class="row">
         <input id="email" type="email" placeholder="E-Mail" style="width:170px" />
-        <button id="sign-in" class="ghost" title="Magic Link senden">➡</button>
+        <button id="sign-in" class="ghost" title="Magic Link senden">Login</button>
       </span>
       <span id="signed-in" class="row" style="display:none">
-        <span class="hint">angemeldet: <strong id="user-email">–</strong></span>
+        <span class="hint">angemeldet: <strong id="user-email">–</strong> <span id="role-badge" class="hint"></span></span>
         <button id="sign-out" class="ghost" title="Logout">⎋</button>
       </span>
     </div>
@@ -136,7 +138,7 @@
     <div><span class="dot" style="background:#f44336"></span> belegt</div>
   </div>
 
-  <!-- Modal: Artikel-Liste -->
+  <!-- Artikel-Liste Modal -->
   <div id="items-modal" class="modal-backdrop" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:2000;">
     <div class="modal" style="background:var(--panel); border:1px solid var(--line); border-radius:.8rem; padding:1rem; width:min(980px,96vw); max-height:80vh; overflow:auto;">
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
@@ -144,6 +146,34 @@
         <button id="items-modal-close">Schließen</button>
       </div>
       <div id="items-table-wrap" class="hint">Lade…</div>
+    </div>
+  </div>
+
+  <!-- Login & Admin Overlay -->
+  <div id="login-overlay">
+    <div id="login-card">
+      <h3 style="margin:.1rem 0 .6rem 0">Anmelden</h3>
+      <div class="row" style="margin-bottom:.5rem">
+        <input id="overlay-email" type="email" placeholder="E-Mail" style="flex:1" />
+        <button id="overlay-login">Magic Link</button>
+      </div>
+      <div class="hint">Nach dem Klick erhältst du einen Link per E-Mail.</div>
+
+      <div id="admin-panel">
+        <h4 style="margin:.9rem 0 .4rem 0">Nutzer verwalten</h4>
+        <div class="row" style="margin-bottom:.4rem">
+          <input id="new-user-email" type="email" placeholder="E-Mail hinzufügen" style="flex:1" />
+          <select id="new-user-role">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button id="btn-add-user">Hinzufügen</button>
+        </div>
+        <table id="users-table">
+          <thead><tr><th>E-Mail</th><th>Rolle</th><th>Aktion</th></tr></thead>
+          <tbody id="users-body"><tr><td colspan="3" class="hint">Lade…</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -161,17 +191,30 @@
     const BOUNDS = L.latLngBounds([ KERPEN[0] - 0.0006, KERPEN[1] - 0.0008 ], [ KERPEN[0] + 0.0006, KERPEN[1] + 0.0008 ]);
     const map = L.map('map', { maxBounds: BOUNDS, maxBoundsViscosity: 1.0 }).setView(KERPEN, 19);
 
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap' }).addTo(map);
-    const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, attribution: 'Tiles © Esri' });
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 20, attribution: '&copy; OpenStreetMap-Mitwirkende', crossOrigin: true
+    }).addTo(map);
+    const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 20, attribution: 'Tiles &copy; Esri & contributors', crossOrigin: true
+    });
 
     L.control.layers({ 'OSM': osm, 'Satellit': esriSat }, {}, { position: 'topleft' }).addTo(map);
     L.rectangle(BOUNDS, { color: '#7cc4ff', weight: 1, fillOpacity: 0.03 }).addTo(map);
 
-    // Resize-Fixes
-    const invalidate = () => setTimeout(() => map.invalidateSize(), 150);
+    // Schwarz/Weiß
+    const mapEl = document.getElementById('map');
+    document.getElementById('bw-toggle').addEventListener('change', e => {
+      if (e.target.checked) mapEl.classList.add('grayscale'); else mapEl.classList.remove('grayscale');
+      setTimeout(() => map.invalidateSize(), 60);
+    });
+
+    // Schwarz-Bild Fixe (Resize/Layer/Tiles)
+    const invalidate = () => setTimeout(() => map.invalidateSize(), 120);
     setTimeout(invalidate, 200);
     window.addEventListener('resize', invalidate);
     map.on('baselayerchange', invalidate);
+    map.on('layeradd', invalidate);
+    map.on('tileerror', invalidate);
     map.whenReady(invalidate);
     document.addEventListener('visibilitychange', invalidate);
 
@@ -196,12 +239,13 @@
     const elSignedIn = document.getElementById('signed-in');
     const elSignedOut = document.getElementById('signed-out');
     const elUserEmail = document.getElementById('user-email');
+    const elRoleBadge = document.getElementById('role-badge');
     const elRefresh = document.getElementById('refresh');
+    const elBtnUsers = document.getElementById('btn-users');
 
     const elProjectFilter = document.getElementById('project-filter');
     const elProjectSearch = document.getElementById('project-search');
     const elProjectClear = document.getElementById('project-clear');
-    const elBwToggle = document.getElementById('bw-toggle');
 
     const elBtnOverview = document.getElementById('btn-items-overview');
     const elItemsModal = document.getElementById('items-modal');
@@ -210,17 +254,50 @@
     const elBtnUploadCsv = document.getElementById('btn-upload-csv');
     const elCsvInput = document.getElementById('csv-input');
 
-    let allProjects = [];
-    let currentUser = null;
+    // Login Overlay
+    const overlay = document.getElementById('login-overlay');
+    const overlayEmail = document.getElementById('overlay-email');
+    document.getElementById('overlay-login').addEventListener('click', async () => {
+      const email = (overlayEmail.value||'').trim();
+      if (!email) return alert('Bitte E-Mail eingeben');
+      const res = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: REDIRECT_URL } });
+      if (res.error) return alert('Login-Fehler: ' + res.error.message);
+      alert('Magic Link gesendet!');
+    });
 
-    // === Auth UI
+    // Admin Panel (Whitelist)
+    const adminPanel = document.getElementById('admin-panel');
+    const usersBody = document.getElementById('users-body');
+    document.getElementById('btn-users').addEventListener('click', () => { overlay.style.display='flex'; });
+    document.getElementById('btn-add-user').addEventListener('click', addAllowedUser);
+
+    // Permissions / Role
+    let currentUser = null;
+    let myRole = 'guest'; // 'admin' | 'user' | 'guest'
+    let allProjects = [];
+    let HAS_ARTICLE_NUMBER = true; // Feature-Flag je nach Schema
+
+    function perms(){
+      return {
+        canDraw: myRole === 'admin',
+        canManageUsers: myRole === 'admin',
+        canAddItems: myRole === 'admin' || myRole === 'user',
+        canAddProjects: myRole === 'admin' || myRole === 'user'
+      };
+    }
     function updateAuthUI(){
       const authed = !!currentUser;
       elSignedIn.style.display = authed ? '' : 'none';
       elSignedOut.style.display = authed ? 'none' : '';
       elUserEmail.textContent = currentUser?.email ?? '–';
-      setDrawingEnabled(authed);
+      elRoleBadge.textContent = authed ? `(${myRole})` : '';
+      elBtnUsers.style.display = perms().canManageUsers ? '' : 'none';
+      setDrawingEnabled(perms().canDraw);
+      // CSV / Katalog nur zeigen, wenn Artikelnummer existiert
+      document.getElementById('btn-upload-csv').style.display = HAS_ARTICLE_NUMBER ? '' : 'none';
     }
+
+    // Magic-Link im Header
     elSignIn.addEventListener('click', async () => {
       const email = (elEmail.value || '').trim();
       if (!email) return alert('Bitte E-Mail eingeben');
@@ -229,31 +306,86 @@
       alert('Magic Link gesendet!');
     });
     elSignOut.addEventListener('click', async () => { await supabase.auth.signOut(); });
+
     elRefresh.addEventListener('click', () => { loadZones(); loadProjects(); });
 
-    supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; updateAuthUI(); });
+    // Auth-Events
+    supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; handlePostLogin(); });
+
+    // Initial
     (async () => {
       const s = await supabase.auth.getSession();
       currentUser = s.data?.session?.user ?? null;
-      updateAuthUI();
+      await detectItemsSchema();
+      await handlePostLogin();
       await loadZones();
       await loadProjects();
       await cleanupOrphanProjects();
       await loadProjects();
     })();
 
+    // === Rollen / Whitelist ===
+    async function handlePostLogin(){
+      if (!currentUser){ myRole='guest'; overlay.style.display='flex'; adminPanel.style.display='none'; updateAuthUI(); return; }
+      const role = await getMyRole();
+      myRole = role || 'guest';
+      overlay.style.display = 'none';
+      adminPanel.style.display = (myRole==='admin') ? 'block' : 'none';
+      updateAuthUI();
+      if (myRole==='admin') await loadAllowedUsers();
+    }
+
+    async function getMyRole(){
+      if (!currentUser?.email) return null;
+      const r = await supabase.from('allowed_emails').select('role').eq('email', currentUser.email.toLowerCase()).maybeSingle();
+      if (r.error){ console.warn('allowed_emails:', r.error.message); return null; }
+      return r.data?.role ?? null;
+    }
+    async function loadAllowedUsers(){
+      usersBody.innerHTML = '<tr><td colspan="3" class="hint">Lade…</td></tr>';
+      const r = await supabase.from('allowed_emails').select('email,role').order('email');
+      if (r.error){ usersBody.innerHTML = `<tr><td colspan="3" class="hint">Fehler: ${escapeHtml(r.error.message)}</td></tr>`; return; }
+      usersBody.innerHTML = (r.data||[]).map(u => `
+        <tr>
+          <td>${escapeHtml(u.email)}</td>
+          <td>
+            <select class="role-change" data-email="${escapeHtml(u.email)}">
+              <option value="user" ${u.role==='user'?'selected':''}>User</option>
+              <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+            </select>
+          </td>
+          <td><button class="del-user" data-email="${escapeHtml(u.email)}">Entfernen</button></td>
+        </tr>
+      `).join('');
+      usersBody.querySelectorAll('.role-change').forEach(s => s.addEventListener('change', async () => {
+        const email = s.getAttribute('data-email'); const role = s.value;
+        const u = await supabase.from('allowed_emails').update({ role }).eq('email', email);
+        if (u.error) alert('Rolle ändern fehlgeschlagen: ' + u.error.message);
+      }));
+      usersBody.querySelectorAll('.del-user').forEach(b => b.addEventListener('click', async () => {
+        const email = b.getAttribute('data-email');
+        if (!confirm(email + ' entfernen?')) return;
+        const d = await supabase.from('allowed_emails').delete().eq('email', email);
+        if (d.error) alert('Entfernen fehlgeschlagen: ' + d.error.message);
+        else await loadAllowedUsers();
+      }));
+    }
+    async function addAllowedUser(){
+      const email = (document.getElementById('new-user-email').value||'').trim().toLowerCase();
+      const role = document.getElementById('new-user-role').value;
+      if (!email) return alert('E-Mail eingeben');
+      const ins = await supabase.from('allowed_emails').upsert([{ email, role }]);
+      if (ins.error) return alert('Hinzufügen fehlgeschlagen: ' + ins.error.message);
+      document.getElementById('new-user-email').value='';
+      await loadAllowedUsers();
+      alert('Nutzer in Whitelist aufgenommen. Er/Sie kann sich per Magic Link anmelden.');
+    }
+
     // === Helpers
     const statusColor = s => s==='frei' ? '#4caf50' : (s==='reserviert' ? '#ff9800' : '#f44336');
     const escapeHtml = str => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 
-    // === Schwarz/Weiß Toggle
-    const mapEl = document.getElementById('map');
-    elBwToggle.addEventListener('change', () => {
-      if (elBwToggle.checked) mapEl.classList.add('grayscale');
-      else mapEl.classList.remove('grayscale');
-    });
-
-    // === Grid-Helfer
+    // === Grid-Tools
     function splitBounds(bounds, rows, cols){
       const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
       const latStep = (ne.lat - sw.lat) / rows, lngStep = (ne.lng - sw.lng) / cols;
@@ -287,9 +419,20 @@
       }
       return cells;
     }
-    function getPathChildren(geo){ if (!geo) return []; if (geo.getLayers) return geo.getLayers().filter(l=>l instanceof L.Path); return (geo instanceof L.Path)?[geo]:[]; }
 
-    // === Laden Zonen + Overlays
+    // Helpers für GeoJSON ↔ bestehende Layer aktualisieren
+    function latlngsFromGeoJSON(gj){
+      const tmp = [];
+      L.geoJSON(gj, { onEachFeature: (f, l) => { if (l.getLatLngs) tmp.push(l.getLatLngs()); }});
+      return tmp;
+    }
+    function applyGeoJSONInPlace(group, gj){
+      const shapes = group.getLayers();
+      const latlngs = latlngsFromGeoJSON(gj);
+      shapes.forEach((sh, i) => { if (latlngs[i]) sh.setLatLngs(latlngs[i]); sh.redraw?.(); });
+    }
+
+    // === Laden Zonen/Overlays
     async function loadZones(){
       zones.clearLayers(); zoneLayerById.clear(); zoneOrigColorById.clear();
       const r = await supabase.from('storage_zones').select('id,name,status,color,geom,created_at').order('created_at',{ascending:true}).limit(1000);
@@ -298,16 +441,19 @@
         if (!row.geom) return;
         const color=row.color||statusColor(row.status);
         const gj=typeof row.geom==='string'?JSON.parse(row.geom):row.geom;
-        const layer=L.geoJSON(gj,{style:{color,weight:2,fillOpacity:0.3}}).addTo(zones);
-        layer.eachLayer(l=>l._zoneId=row.id);
+        const layer=L.geoJSON(gj,{style:{color,weight:2,fillOpacity:0.3}, pane:'overlayPane'}).addTo(zones);
+        layer.eachLayer(l=>{ l._zoneId=row.id; });
         zoneLayerById.set(row.id, layer);
         zoneOrigColorById.set(row.id, color);
+
+        // Popup mit Bearbeitungsleiste (Bewegen/Drehen)
         layer.bindPopup(zonePopupHtml(row), {
-          className:'zone-popup', maxWidth:(window.innerWidth<800?Math.min(420,Math.floor(window.innerWidth*0.9)):420),
+          className:'zone-popup',
+          maxWidth:(window.innerWidth<800?Math.min(420,Math.floor(window.innerWidth*0.9)):420),
           autoPan:true, keepInView:true,
           autoPanPaddingTopLeft:[20,80], autoPanPaddingBottomRight:[20,140]
         });
-        layer.on('popupopen',()=>document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row}})));
+        layer.on('popupopen', () => document.dispatchEvent(new CustomEvent('popupopen-for-zone',{detail:{layer,row}})));
       });
       await loadOverlays();
     }
@@ -324,15 +470,28 @@
     }
 
     function zonePopupHtml(row){
-      const addBtn=currentUser?`<button class="btn-add-project" data-zone="${row.id}" title="Projekt zuordnen">+ Projekt</button>`:'';
-      const transformBtn=currentUser?`<button class="btn-transform" data-zone="${row.id}" title="Zone verschieben / drehen">↻/↔</button>`:'';
+      const canP = perms().canAddProjects;
+      const canI = perms().canAddItems;
+      const editBar = perms().canDraw ? `
+        <div class="row" style="gap:.4rem; margin:.4rem 0;">
+          <button class="btn-move"   data-zone="${row.id}" title="Bewegen (ziehen)">Bewegen</button>
+          <button class="btn-rotate" data-zone="${row.id}" title="Drehen per Slider">Drehen</button>
+        </div>` : '';
+      const addBtn = canP ? `<button class="btn-add-project" data-zone="${row.id}" title="Projekt zuordnen">+ Projekt</button>` : '';
+      const addItem = canI ? `<button class="btn-add-item" data-zone="${row.id}" title="Artikel hinzufügen">+ Artikel</button>` : '';
       return `
         <div>
           <strong>${escapeHtml(row.name||'Zone')}</strong><br>
           <small class="hint">Status: ${escapeHtml(row.status||'—')}</small>
           <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
-          <div class="row" style="margin:.4rem 0; gap:.4rem;">
-            ${transformBtn}
+          ${editBar}
+          <div class="rotate-ui" style="display:none; margin:.25rem 0 .4rem 0;">
+            <div class="row" style="gap:.4rem">
+              <input type="range" min="-180" max="180" value="0" step="1" class="rot-slider" style="width:160px">
+              <span class="hint rot-value">0°</span>
+              <button class="rot-save">Speichern</button>
+              <button class="rot-cancel">Abbrechen</button>
+            </div>
           </div>
           <hr style="border-color:#1b2737">
           <div class="row" style="justify-content:space-between;">
@@ -340,37 +499,54 @@
           </div>
           <div id="projects-${row.id}" class="projects" style="margin:.5rem 0"></div>
           <div class="row" style="justify-content:space-between;">
-            <div class="hint">Artikel in dieser Zone</div>
-            ${currentUser?`<button class="btn-add-item" data-zone="${row.id}" title="Artikel hinzufügen">+ Artikel</button>`:''}
+            <div class="hint">Artikel in dieser Zone</div>${addItem}
           </div>
           <div id="items-${row.id}" class="items" style="margin-top:.5rem"></div>
         </div>`;
     }
 
-    // === Transform (verschieben/drehen)
-    function enableTransformForZoneId(zoneId){
-      const group=zoneLayerById.get(zoneId); if(!group) return 0;
-      const paths=getPathChildren(group); if(!paths.length) return 0;
-      try{ group.closePopup?.(); }catch{}
-      let enabled=0;
-      paths.forEach(path=>{
-        if (path.transform && path.transform._enabled){ path.transform.disable(); return; }
-        if (!path.transform) return;
-        path.transform.enable({ rotation:true, scaling:false, draggable:true });
-        path.bringToFront?.(); enabled++;
-        const onEnd=async()=>{ path.off('transformend', onEnd);
-          const gj=group.toGeoJSON();
-          const r=await supabase.from('storage_zones').update({geom:gj}).eq('id', zoneId);
-          if(r.error) alert('Speichern fehlgeschlagen: '+r.error.message);
-        };
-        path.on('transformend', onEnd);
+    // === Move & Rotate ===
+    function enableMove(group, on){
+      group.getLayers().forEach(sh=>{
+        try{
+          if (on) { sh.dragging?.enable(); sh._path?.classList?.add('leaflet-grab'); }
+          else    { sh.dragging?.disable(); sh._path?.classList?.remove('leaflet-grab'); }
+        }catch{}
       });
-      return enabled;
+    }
+
+    function startRotateUI(group, zoneId, container){
+      const ui = container.querySelector('.rotate-ui'); if (!ui) return;
+      ui.style.display = 'block';
+      const slider = ui.querySelector('.rot-slider');
+      const label  = ui.querySelector('.rot-value');
+
+      const base = group.toGeoJSON(); // unverändert
+      let currentAngle = 0;
+
+      const applyAngle = (deg) => {
+        currentAngle = deg;
+        label.textContent = `${deg}°`;
+        const rotated = turf.transformRotate(base, deg, { mutate:false });
+        applyGeoJSONInPlace(group, rotated);
+      };
+
+      slider.oninput = () => applyAngle(Number(slider.value));
+      ui.querySelector('.rot-cancel').onclick = () => {
+        applyGeoJSONInPlace(group, base); ui.style.display='none';
+      };
+      ui.querySelector('.rot-save').onclick = async () => {
+        const rotated = turf.transformRotate(base, currentAngle, { mutate:false });
+        const r = await supabase.from('storage_zones').update({ geom: rotated }).eq('id', zoneId);
+        if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
+        ui.style.display='none';
+      };
     }
 
     // === Zeichnen → Speichern (+Teilung)
     map.on(L.Draw.Event.CREATED, async e=>{
-      if(!currentUser) return alert('Bitte vorher einloggen.');
+      if(!(currentUser && myRole!=='guest')) { overlay.style.display='flex'; return; }
+      if(!perms().canDraw) return alert('Nur Admins dürfen Zonen anlegen/bearbeiten.');
       const layer=e.layer, type=e.layerType;
       const inside=BOUNDS.contains(layer.getBounds?layer.getBounds():layer.getLatLng());
       if(!inside) return alert('Form liegt außerhalb des Grundstücks.');
@@ -402,7 +578,8 @@
           else { const n=parseInt(grid,10); if(!isNaN(n)&&n>1){ cols=n; rows=1; } }
         }
         if(cols>0&&rows>0){
-          const cells= type==='rectangle' ? splitBounds(layer.getBounds(), rows, cols) : splitPolygonIntoGrid(layer, rows, cols);
+          const cells= type==='rectangle' ? splitBounds(layer.getBounds(), rows, cols)
+                                          : splitPolygonIntoGrid(layer, rows, cols);
           if(cells.length){
             const payload=cells.map(cell=>({ name:`${name}-${cell.c}/${cell.r}`, status, color, geom:cell.geojson }));
             const ins=await supabase.from('storage_zones').insert(payload).select('id,name,geom,created_at');
@@ -421,7 +598,6 @@
       }
       if(didGrid) return;
 
-      // Einzel-Zone
       const gj2=layer.toGeoJSON();
       zones.addLayer(layer);
       const r2=await supabase.from('storage_zones').insert({name,status,color,geom:gj2}).select('id,created_at').single();
@@ -434,14 +610,16 @@
       await loadProjects();
     });
 
-    // === Bearbeiten / Löschen
+    // Edit / Delete (nur Admin)
     map.on(L.Draw.Event.EDITED, async e=>{
+      if(!perms().canDraw) return;
       const updates=[]; e.layers.eachLayer(l=>{ if(l._zoneId) updates.push({id:l._zoneId,geom:l.toGeoJSON()}); });
       for(const u of updates){ const r=await supabase.from('storage_zones').update({geom:u.geom}).eq('id',u.id);
         if(r.error) return alert('Update fehlgeschlagen: '+r.error.message); }
       alert('Zonen aktualisiert.');
     });
     map.on(L.Draw.Event.DELETED, async e=>{
+      if(!perms().canDraw) return;
       const ids=[]; e.layers.eachLayer(l=>{ if(l._zoneId) ids.push(l._zoneId); });
       if(!ids.length) return;
       const r=await supabase.from('storage_zones').delete().in('id',ids);
@@ -450,46 +628,82 @@
       await cleanupOrphanProjects(); await loadProjects(); alert('Zonen gelöscht.');
     });
 
-    // === Popup Interaktionen (Items/Projects/Transform)
+    // Popup Interaktionen
     document.addEventListener('popupopen-for-zone', async ev=>{
       const { layer, row } = ev.detail;
       const el = layer.getPopup()?.getElement(); if(!el) return;
 
-      el.querySelector('.btn-transform')?.addEventListener('click', ()=>{
-        if(!currentUser) return alert('Bitte einloggen.'); const n=enableTransformForZoneId(row.id);
-        if(!n) alert('Konnte Transform nicht aktivieren.');
+      // Bewegen (drag)
+      el.querySelector('.btn-move')?.addEventListener('click', async () => {
+        if (!perms().canDraw) return alert('Nur Admins dürfen Zonen bewegen.');
+        const on = !(layer._dragOn);
+        enableMove(layer, on);
+        layer._dragOn = on;
+        if (on){
+          const onEnd = async () => {
+            const gj = layer.toGeoJSON();
+            const r = await supabase.from('storage_zones').update({ geom: gj }).eq('id', row.id);
+            if (r.error) alert('Speichern fehlgeschlagen: ' + r.error.message);
+          };
+          layer.once('dragend', onEnd);
+        }
       });
 
+      // Drehen (Slider)
+      el.querySelector('.btn-rotate')?.addEventListener('click', () => {
+        if (!perms().canDraw) return alert('Nur Admins dürfen Zonen drehen.');
+        startRotateUI(layer, row.id, el);
+      });
+
+      // Items / Projekte
       await populateItems(row.id, el.querySelector('#items-'+row.id));
       await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id));
 
       el.querySelector('.btn-add-item')?.addEventListener('click', async ()=>{
-        if(!currentUser) return alert('Bitte einloggen.');
+        if(!perms().canAddItems) return alert('Keine Berechtigung.');
         await addItem(row.id); await populateItems(row.id, el.querySelector('#items-'+row.id));
       });
       el.querySelector('.btn-add-project')?.addEventListener('click', async ()=>{
-        if(!currentUser) return alert('Bitte einloggen.');
+        if(!perms().canAddProjects) return alert('Keine Berechtigung.');
         await addProjectToZone(row.id); await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id)); await loadProjects();
       });
     });
 
     // === Items (Artikel)
+    async function detectItemsSchema(){
+      // Test-Select, ob article_number existiert
+      const t = await supabase.from('storage_items').select('id,article_number').limit(1);
+      if (t.error && /column .* does not exist/i.test(t.error.message)) {
+        HAS_ARTICLE_NUMBER = false;
+      }
+    }
+
+    async function selectItemsForZone(zoneId){
+      const cols = HAS_ARTICLE_NUMBER ? 'id,article_number,name,qty,unit,notes,created_at' : 'id,name,qty,unit,notes,created_at';
+      const r = await supabase.from('storage_items').select(cols).eq('zone_id', zoneId).order('created_at',{ascending:true});
+      return r;
+    }
+    async function selectAllItems(){
+      const cols = HAS_ARTICLE_NUMBER ? 'article_number,name,qty,unit' : 'name,qty,unit';
+      return await supabase.from('storage_items').select(cols);
+    }
+
     async function populateItems(zoneId, container){
       if(!container) return;
       container.innerHTML='<span class="hint">Lade Artikel…</span>';
-      const r=await supabase.from('storage_items').select('id,article_number,name,qty,unit,notes,created_at').eq('zone_id',zoneId).order('created_at',{ascending:true});
+      const r = await selectItemsForZone(zoneId);
       if(r.error) return container.innerHTML='<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
       const data=r.data||[];
       if(!data.length) return container.innerHTML='<span class="hint">Keine Artikel vorhanden.</span>';
       container.innerHTML=data.map(it=>{
         const qty=(it.qty??'')!==''?`&times; ${Number(it.qty)} ${it.unit?escapeHtml(it.unit):''}`:'';
         const notes=it.notes?`<div class="hint">${escapeHtml(it.notes)}</div>`:'';
-        const actions=currentUser?`<div class="row"><button class="btn-edit-item" data-id="${it.id}">Bearbeiten</button><button class="btn-del-item" data-id="${it.id}">Löschen</button></div>`:'';
-        const head=it.article_number?`<span class="hint" style="border:1px solid #28405e;padding:.05rem .35rem;border-radius:.35rem">${escapeHtml(it.article_number)}</span> `:'';
+        const actions=(perms().canAddItems||perms().canDraw)?`<div class="row"><button class="btn-edit-item" data-id="${it.id}">Bearbeiten</button><button class="btn-del-item" data-id="${it.id}">Löschen</button></div>`:'';
+        const head=(HAS_ARTICLE_NUMBER && it.article_number)?`<span class="hint" style="border:1px solid #28405e;padding:.05rem .35rem;border-radius:.35rem">${escapeHtml(it.article_number)}</span> `:'';
         return `<div class="item-row" data-id="${it.id}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
           <div><div>${head}<strong>${escapeHtml(it.name)}</strong> ${qty}</div>${notes}</div>${actions}</div>`;
       }).join('');
-      if(currentUser){
+      if(perms().canAddItems||perms().canDraw){
         container.querySelectorAll('.btn-edit-item').forEach(b=>b.addEventListener('click', async ()=>{
           const id=b.getAttribute('data-id'); await editItem(id); await populateItems(zoneId, container);
         }));
@@ -505,20 +719,26 @@
     // Artikelstamm Cache
     let itemCatalogByNumber=new Map();
     async function loadItemCatalog(){
+      if (!HAS_ARTICLE_NUMBER){ itemCatalogByNumber = new Map(); return; }
       const r=await supabase.from('item_catalog').select('article_number,name,manufacturer').order('name');
       if(r.error){ console.warn('Katalog laden:',r.error); itemCatalogByNumber=new Map(); return; }
       itemCatalogByNumber=new Map((r.data||[]).filter(x=>x.article_number).map(x=>[String(x.article_number).trim(),x]));
     }
     async function addItem(zoneId){
       await loadItemCatalog();
-      let article_number=(prompt('Artikelnummer (optional):','')||'').trim();
-      let name=''; const cat=article_number?itemCatalogByNumber.get(article_number):null;
+      let article_number = '';
+      if (HAS_ARTICLE_NUMBER){
+        article_number=(prompt('Artikelnummer (optional):','')||'').trim();
+      }
+      let name=''; const cat=HAS_ARTICLE_NUMBER && article_number?itemCatalogByNumber.get(article_number):null;
       if(cat) name=cat.name||'';
       name=prompt('Artikel/Bezeichnung:',name||'')||name;
       const qtyStr=prompt('Menge (Zahl):','1'); const qty=qtyStr?Number(qtyStr):null;
       const unit=prompt('Einheit (z. B. Stk, Paletten, m²):','Stk')||null;
       const notes=prompt('Notizen (optional):')||null;
-      const r=await supabase.from('storage_items').insert({zone_id:zoneId,article_number:article_number||null,name,qty,unit,notes});
+      const payload = HAS_ARTICLE_NUMBER ? {zone_id:zoneId,article_number:article_number||null,name,qty,unit,notes}
+                                         : {zone_id:zoneId,name,qty,unit,notes};
+      const r=await supabase.from('storage_items').insert(payload);
       if(r.error) alert('Speichern fehlgeschlagen: '+r.error.message);
     }
     async function editItem(itemId){
@@ -526,16 +746,21 @@
       const r=await supabase.from('storage_items').select('*').eq('id',itemId).single();
       if(r.error) return alert('Laden fehlgeschlagen: '+r.error.message);
       const d=r.data;
-      let article_number=(prompt('Artikelnummer:', d.article_number||'')??d.article_number)||'';
-      article_number=article_number.trim();
-      let nameDefault=d.name||''; const cat=article_number?itemCatalogByNumber.get(article_number):null;
+      let article_number = d.article_number || '';
+      if (HAS_ARTICLE_NUMBER){
+        article_number=(prompt('Artikelnummer:', d.article_number||'')??d.article_number)||'';
+        article_number=article_number.trim();
+      }
+      let nameDefault=d.name||''; const cat=HAS_ARTICLE_NUMBER && article_number?itemCatalogByNumber.get(article_number):null;
       if(cat && !nameDefault) nameDefault=cat.name||'';
       let name=prompt('Artikel/Bezeichnung:', nameDefault)??nameDefault;
       let qtyStr=prompt('Menge (Zahl):', d.qty??''); if(qtyStr===null) qtyStr=String(d.qty??'');
       const qty=qtyStr!==''?Number(qtyStr):null;
       let unit=prompt('Einheit:', d.unit||'')??d.unit;
       let notes=prompt('Notizen:', d.notes||'')??d.notes;
-      const u=await supabase.from('storage_items').update({article_number:article_number||null,name,qty,unit,notes}).eq('id', itemId);
+      const payload = HAS_ARTICLE_NUMBER ? {article_number:article_number||null,name,qty,unit,notes}
+                                         : {name,qty,unit,notes};
+      const u=await supabase.from('storage_items').update(payload).eq('id', itemId);
       if(u.error) alert('Update fehlgeschlagen: '+u.error.message);
     }
 
@@ -566,12 +791,12 @@
       const data=r.data||[];
       if(!data.length) return container.innerHTML='<span class="hint">Keine Projekte zugeordnet.</span>';
       container.innerHTML=data.map(zp=>{
-        const removeBtn=currentUser?`<button class="btn-remove-project" data-id="${zp.id}">Entfernen</button>`:'';
+        const removeBtn=perms().canAddProjects?`<button class="btn-remove-project" data-id="${zp.id}">Entfernen</button>`:'';
         return `<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">
           <div><strong>${escapeHtml(zp.project?.name??'Projekt')}</strong></div>${removeBtn}
         </div>`;
       }).join('');
-      if(currentUser){
+      if(perms().canAddProjects){
         container.querySelectorAll('.btn-remove-project').forEach(b=>b.addEventListener('click', async ()=>{
           const id=b.getAttribute('data-id');
           const d=await supabase.from('zone_projects').delete().eq('id',id);
@@ -583,7 +808,7 @@
     async function addProjectToZone(zoneId){
       const chk=await supabase.from('storage_zones').select('id').eq('id', zoneId).maybeSingle();
       if(chk.error) return alert('Zone prüfen fehlgeschlagen: '+chk.error.message);
-      if(!chk.data){ await loadZones(); return alert('Diese Zone existiert nicht mehr. Bitte aktualisieren.'); }
+      if(!chk.data){ await loadZones(); return alert('Diese Zone existiert nicht mehr.'); }
       let name=prompt('Projektname (neu oder bestehend):'); if(!name) return; name=name.trim();
       const existing=await supabase.from('projects').select('id').ilike('name', name).limit(1);
       if(existing.error) return alert('Suche fehlgeschlagen: '+existing.error.message);
@@ -639,8 +864,8 @@
       }
     }
 
-    // === CSV Upload
-    elBtnUploadCsv.addEventListener('click', ()=>{ if(!currentUser) return alert('Bitte einloggen.'); elCsvInput.value=''; elCsvInput.click(); });
+    // === CSV Upload / Artikelübersicht
+    document.getElementById('btn-upload-csv').addEventListener('click', ()=>{ if(!perms().canAddItems||!HAS_ARTICLE_NUMBER) return alert('CSV-Import nur mit Artikelnummer aktiv.'); elCsvInput.value=''; elCsvInput.click(); });
     elCsvInput.addEventListener('change', async ()=>{
       if(!elCsvInput.files?.length) return; const file=elCsvInput.files[0];
       Papa.parse(file,{ header:true, skipEmptyLines:true, complete: async (results)=>{
@@ -661,21 +886,20 @@
       }});
     });
 
-    // === Artikel-Liste (Modal)
     elBtnOverview.addEventListener('click', async ()=>{ await showItemsOverview(); elItemsModal.style.display='flex'; });
     elItemsClose.addEventListener('click', ()=>{ elItemsModal.style.display='none'; });
 
     async function showItemsOverview(){
       await loadItemCatalog();
-      const r=await supabase.from('storage_items').select('article_number,name,qty,unit');
+      const r=await selectAllItems();
       if(r.error){ elItemsTableWrap.innerHTML='<div class="hint">Fehler: '+escapeHtml(r.error.message)+'</div>'; return; }
       const list=r.data||[]; const agg=new Map();
       for(const it of list){
-        const key=(it.article_number||it.name||'—').toString().trim().toLowerCase();
-        const row=agg.get(key)||{article_number:it.article_number||null,name:it.name||null,manufacturer:null,qty:0,units:new Set()};
+        const key=(HAS_ARTICLE_NUMBER?(it.article_number||it.name):(it.name)||'—').toString().trim().toLowerCase();
+        const row=agg.get(key)||{article_number:HAS_ARTICLE_NUMBER?it.article_number:null,name:it.name||null,manufacturer:null,qty:0,units:new Set()};
         const q=typeof it.qty==='number'?it.qty:(it.qty?Number(it.qty):0); if(!isNaN(q)) row.qty+=q;
         if(it.unit) row.units.add(it.unit);
-        if(row.article_number && itemCatalogByNumber.has(row.article_number)){
+        if(HAS_ARTICLE_NUMBER && row.article_number && itemCatalogByNumber.has(row.article_number)){
           const cat=itemCatalogByNumber.get(row.article_number);
           row.name=row.name||cat.name||row.name;
           row.manufacturer=cat.manufacturer||row.manufacturer;
@@ -687,7 +911,7 @@
         <table style="width:100%; border-collapse:collapse; font-size:.95rem">
           <thead>
             <tr>
-              <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Artikelnummer</th>
+              ${HAS_ARTICLE_NUMBER?'<th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Artikelnummer</th>':''}
               <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Name</th>
               <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Hersteller</th>
               <th style="text-align:left; border-bottom:1px solid var(--line); padding:.5rem">Gesamtmenge</th>
@@ -697,7 +921,7 @@
           <tbody>
             ${rows.map(r=>`
               <tr>
-                <td style="border-bottom:1px solid var(--line); padding:.5rem">${r.article_number?escapeHtml(r.article_number):'<span class="hint">–</span>'}</td>
+                ${HAS_ARTICLE_NUMBER?`<td style="border-bottom:1px solid var(--line); padding:.5rem">${r.article_number?escapeHtml(r.article_number):'<span class="hint">–</span>'}</td>`:''}
                 <td style="border-bottom:1px solid var(--line); padding:.5rem">${r.name?escapeHtml(r.name):'<span class="hint">(ohne Name)</span>'}</td>
                 <td style="border-bottom:1px solid var(--line); padding:.5rem">${r.manufacturer?escapeHtml(r.manufacturer):'<span class="hint">–</span>'}</td>
                 <td style="border-bottom:1px solid var(--line); padding:.5rem">${Number(r.qty).toLocaleString()}</td>
