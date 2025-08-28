@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lagerzonen — Boschstraße 60a, 50171 Kerpen</title>
+  <!-- Leaflet & Leaflet.draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <style>
+    :root { --bg:#0b0f14; --panel:#121821; --text:#f3f6fb; --muted:#9fb0c0; --accent:#7cc4ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial; background: var(--bg); color: var(--text); }
+
+    header { position: sticky; top: 0; z-index: 1000; background: var(--panel); border-bottom: 1px solid #1d2735; padding: .75rem 1rem; display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+    header h1 { font-size: 1rem; font-weight: 600; margin: 0 .5rem 0 0; }
+    .spacer { flex: 1; }
+    .pill { background: #0f1622; border: 1px solid #1e2a3d; border-radius: 999px; padding: .4rem .75rem; color: var(--muted); }
+    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    input[type=email], input[type=text] { background: #0f1622; border: 1px solid #223146; border-radius: .5rem; color: var(--text); padding: .5rem .6rem; }
+    button { background: #1e2a3d; color: var(--text); border: 1px solid #2b3b55; border-radius: .5rem; padding: .5rem .75rem; cursor: pointer; }
+    button:hover { filter: brightness(1.1); }
+
+    #map { height: calc(100vh - 64px); width: 100%; }
+    .leaflet-container { background: #0a0e13; }
+    .legend { position: fixed; right: .75rem; bottom: .75rem; background: var(--panel); border: 1px solid #1d2735; border-radius: .75rem; padding: .5rem .75rem; font-size: .85rem; color: var(--muted); }
+    .legend .dot { display:inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .4rem; vertical-align: middle; }
+    .hint { color: var(--muted); font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📦 Lagerzonen — Boschstraße 60a</h1>
+    <span class="pill">Fixes Grundstück, kostenlose Tools</span>
+    <div class="spacer"></div>
+    <div id="auth" class="row">
+      <div id="signed-out" class="row">
+        <input id="email" type="email" placeholder="E-Mail für Magic Link" />
+        <button id="sign-in">Einloggen</button>
+      </div>
+      <div id="signed-in" class="row" style="display:none">
+        <span class="hint">Angemeldet als <strong id="user-email">–</strong></span>
+        <button id="sign-out">Logout</button>
+      </div>
+      <button id="refresh">🔄 Aktualisieren</button>
+    </div>
+  </header>
+
+  <div id="map"></div>
+
+  <div class="legend">
+    <div><span class="dot" style="background:#4caf50"></span> frei</div>
+    <div><span class="dot" style="background:#ff9800"></span> reserviert</div>
+    <div><span class="dot" style="background:#f44336"></span> belegt</div>
+  </div>
+
+  <script type="module">
+    // === 1) Supabase verbinden ===
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    // TODO: Ersetze durch deine Supabase-Daten (Settings → API)
+    const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
+    const SUPABASE_ANON_KEY = 'paste-your-anon-public-key-here';
+    const supabase = (window.supabaseClient) ? window.supabaseClient : createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // global verfügbar machen, damit andere Skripte dieselbe Instanz nutzen
+    window.supabaseClient = supabase;
+
+    // === 2) Karte vorbereiten ===
+    const KERPEN = [50.881785, 6.668967]; // Boschstraße 60a präzise Koordinaten // Boschstraße 60a
+    const BOUNDS = L.latLngBounds(
+      [KERPEN[0] - 0.0006, KERPEN[1] - 0.0008],  // SW-Ecke (~60m x ~55m)
+      [KERPEN[0] + 0.0006, KERPEN[1] + 0.0008]   // NE-Ecke
+    );
+
+    const map = L.map('map', { maxBounds: BOUNDS, maxBoundsViscosity: 1.0 }).setView(KERPEN, 19);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 20,
+      attribution: '&copy; OpenStreetMap-Mitwirkende'
+    }).addTo(map);
+
+    // Optional: Grundstück als Rechteck visualisieren
+    L.rectangle(BOUNDS, { color: '#7cc4ff', weight: 1, fillOpacity: 0.03 }).addTo(map);
+
+    // Layer für Zonen
+    const zones = L.featureGroup().addTo(map);
+
+    // === 3) Zeichnen/Bearbeiten aktivieren (nur für eingeloggte Nutzer) ===
+    const drawControl = new L.Control.Draw({
+      draw: {
+        polyline: false,
+        circle: false,
+        circlemarker: false,
+        marker: false,
+        polygon: { allowIntersection: false, showArea: true },
+        rectangle: { showArea: true }
+      },
+      edit: { featureGroup: zones, remove: true }
+    });
+
+    function setDrawingEnabled(enabled) {
+      if (enabled) { map.addControl(drawControl); }
+      else { map.removeControl(drawControl); }
+    }
+
+    // === 4) Auth-UI ===
+    const elEmail = document.getElementById('email');
+    const elSignIn = document.getElementById('sign-in');
+    const elSignOut = document.getElementById('sign-out');
+    const elSignedIn = document.getElementById('signed-in');
+    const elSignedOut = document.getElementById('signed-out');
+    const elUserEmail = document.getElementById('user-email');
+    const elRefresh = document.getElementById('refresh');
+
+    let currentUser = null;
+    function updateAuthUI() {
+      const authed = !!currentUser;
+      elSignedIn.style.display = authed ? '' : 'none';
+      elSignedOut.style.display = authed ? 'none' : '';
+      elUserEmail.textContent = currentUser?.email ?? '–';
+      setDrawingEnabled(authed);
+    }
+
+    elSignIn.addEventListener('click', async () => {
+      const email = elEmail.value.trim();
+      if (!email) return alert('Bitte E-Mail eingeben');
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: window.location.href }
+      });
+      if (error) return alert('Login-Fehler: ' + error.message);
+      alert('Magic Link gesendet!');
+    });
+    elSignOut.addEventListener('click', async () => { await supabase.auth.signOut(); });
+    elRefresh.addEventListener('click', loadZones);
+
+    supabase.auth.onAuthStateChange((_e, session) => { currentUser = session?.user ?? null; updateAuthUI(); });
+    (async () => { const { data } = await supabase.auth.getSession(); currentUser = data.session?.user ?? null; updateAuthUI(); await loadZones(); })();
+
+    // === 5) Zonen laden/speichern ===
+    function statusColor(status){
+      return status === 'frei' ? '#4caf50' : status === 'reserviert' ? '#ff9800' : '#f44336';
+    }
+
+    async function loadZones() {
+      zones.clearLayers();
+      const { data, error } = await supabase
+        .from('storage_zones')
+        .select('id,name,status,color,geom,created_by,created_at')
+        .order('created_at', { ascending: true })
+        .limit(1000);
+      if (error) { console.error(error); alert('Fehler beim Laden: ' + error.message); return; }
+      if (!data) return;
+
+      data.forEach(row => {
+        if (!row.geom) return;
+        const gj = typeof row.geom === 'string' ? JSON.parse(row.geom) : row.geom;
+        const layer = L.geoJSON(gj, {
+          style: { color: row.color || statusColor(row.status), weight: 2, fillOpacity: 0.3 }
+        }).addTo(zones);
+
+        layer.eachLayer(l => { l._zoneId = row.id; });
+        layer.bindPopup(zonePopupHtml(row));
+        // WICHTIG: Wenn Popup aufgeht → Artikelliste laden
+        layer.on('popupopen', () => {
+          const ev = new CustomEvent('popupopen-for-zone', { detail: { layer, row } });
+          document.dispatchEvent(ev);
+        });
+      });
+    }
+
+    function zonePopupHtml(row){
+      return `<div>
+        <strong>${escapeHtml(row.name || 'Zone')}</strong><br>
+        <small class="hint">Status: ${escapeHtml(row.status || '—')}</small>
+        <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
+      </div>`;
+    }
+
+    // Zeichnen → Speichern
+    map.on(L.Draw.Event.CREATED, async (e) => {
+      if (!currentUser) return alert('Bitte vorher einloggen.');
+      const layer = e.layer;
+      if (!BOUNDS.contains(layer.getBounds ? layer.getBounds() : layer.getLatLng())) {
+        return alert('Zone liegt außerhalb des Grundstücks.');
+      }
+      const name = prompt('Name der Zone (z.B. A1):');
+      if (name === null) return; // Abbruch
+      const status = prompt('Status (frei/reserviert/belegt):', 'frei') || 'frei';
+      const color = statusColor(status);
+
+      const gj = layer.toGeoJSON();
+      zones.addLayer(layer);
+
+      const { data, error } = await supabase.from('storage_zones').insert({
+        name, status, color, geom: gj
+      }).select('id,created_at').single();
+
+      if (error) { alert('Speichern fehlgeschlagen: ' + error.message); zones.removeLayer(layer); return; }
+      layer._zoneId = data.id;
+      layer.setStyle?.({ color, fillOpacity: 0.3, weight: 2 });
+      layer.bindPopup(zonePopupHtml({ id: data.id, name, status, color, created_at: data.created_at }));
+    });
+
+    // Bearbeiten → Aktualisieren
+    map.on(L.Draw.Event.EDITED, async (e) => {
+      const layers = e.layers;
+      const updates = [];
+      layers.eachLayer((layer) => {
+        if (!layer._zoneId) return;
+        const gj = layer.toGeoJSON();
+        updates.push({ id: layer._zoneId, geom: gj });
+      });
+      for (const u of updates) {
+        const { error } = await supabase.from('storage_zones').update({ geom: u.geom }).eq('id', u.id);
+        if (error) return alert('Update fehlgeschlagen: ' + error.message);
+      }
+      alert('Zonen aktualisiert.');
+    });
+
+    // Löschen → Entfernen
+    map.on(L.Draw.Event.DELETED, async (e) => {
+      const layers = e.layers;
+      const ids = [];
+      layers.eachLayer((layer) => { if (layer._zoneId) ids.push(layer._zoneId); });
+      if (!ids.length) return;
+      const { error } = await supabase.from('storage_zones').delete().in('id', ids);
+      if (error) return alert('Löschen fehlgeschlagen: ' + error.message);
+      alert('Zonen gelöscht.');
+    });
+
+    // Hilfsfunktion: XSS verhindern
+    function escapeHtml(str){
+      return String(str).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
+    }
+  </script>  <script type="module">
+    // === (unverändert oben) Supabase/Karte/Zonen-Logik ===
+    // ... (alles wie in der vorherigen Version bis inklusive escapeHtml) ...
+  </script>
+
+  <script type="module">
+    // =============================
+    // NEU: Artikel je Lagerzone
+    // Tabelle: storage_items (siehe SQL unten im Chat)
+    // =============================
+
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
+    const SUPABASE_ANON_KEY = 'paste-your-anon-public-key-here';
+    const supabase = (window.supabaseClient) ? window.supabaseClient : createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Wir greifen auf die bestehenden globalen Variablen/Funktionen zu,
+    // daher hängen wir uns an window (die wurden im ersten <script type="module"> definiert).
+    const w = window;
+
+    // Hilfsrenderer für Popup mit Artikelliste
+    w.zonePopupHtml = function zonePopupHtml(row){
+      const addBtn = (w.currentUser ? `<button class="btn-add-item" data-zone="${row.id}">+ Artikel</button>` : '');
+      return `<div>
+        <strong>${w.escapeHtml(row.name || 'Zone')}</strong><br>
+        <small class="hint">Status: ${w.escapeHtml(row.status || '—')}</small>
+        <div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div>
+        <hr style="border-color:#1d2735">
+        <div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
+          <div class="hint">Artikel in dieser Zone</div>
+          ${addBtn}
+        </div>
+        <div id="items-${row.id}" class="items" style="margin-top:.5rem"></div>
+      </div>`;
+    }
+
+    // Wenn ein Zonen-Popup geöffnet wird → Artikel laden & Buttons verdrahten
+    document.addEventListener('popupopen-for-zone', async (ev) => {
+      const { layer, row } = ev.detail;
+      const popupEl = layer.getPopup()?.getElement();
+      if (!popupEl) return;
+
+      // Liste füllen
+      await populateItems(row.id, popupEl.querySelector(`#items-${row.id}`));
+
+      // Add-Button
+      const btnAdd = popupEl.querySelector('.btn-add-item');
+      if (btnAdd) btnAdd.addEventListener('click', async () => {
+        if (!w.currentUser) return alert('Bitte einloggen.');
+        await addItem(row.id);
+        await populateItems(row.id, popupEl.querySelector(`#items-${row.id}`));
+      });
+    });
+
+    async function populateItems(zoneId, container){
+      if (!container) return;
+      container.innerHTML = '<span class="hint">Lade Artikel…</span>';
+      const { data, error } = await supabase
+        .from('storage_items')
+        .select('id,name,qty,unit,notes,created_by,created_at')
+        .eq('zone_id', zoneId)
+        .order('created_at', { ascending: true });
+      if (error) { container.innerHTML = `<span class="hint">Fehler: ${w.escapeHtml(error.message)}</span>`; return; }
+      if (!data || data.length === 0) { container.innerHTML = '<span class="hint">Keine Artikel vorhanden.</span>'; return; }
+
+      // Render
+      container.innerHTML = data.map(item => `
+        <div class="item-row" data-id="${item.id}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid #1d2735;border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
+          <div>
+            <div><strong>${w.escapeHtml(item.name)}</strong> ${item.qty != null ? `&times; ${Number(item.qty)} ${item.unit ? w.escapeHtml(item.unit) : ''}` : ''}</div>
+            ${item.notes ? `<div class="hint">${w.escapeHtml(item.notes)}</div>` : ''}
+          </div>
+          ${w.currentUser ? `<div class="row">
+            <button class="btn-edit-item" data-id="${item.id}">Bearbeiten</button>
+            <button class="btn-del-item" data-id="${item.id}">Löschen</button>
+          </div>` : ''}
+        </div>`).join('');
+
+      if (w.currentUser) {
+        container.querySelectorAll('.btn-edit-item').forEach(btn => btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-id');
+          await editItem(id);
+          await populateItems(zoneId, container);
+        }));
+        container.querySelectorAll('.btn-del-item').forEach(btn => btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-id');
+          if (!confirm('Diesen Artikel löschen?')) return;
+          const { error } = await supabase.from('storage_items').delete().eq('id', id);
+          if (error) return alert('Löschen fehlgeschlagen: ' + error.message);
+          await populateItems(zoneId, container);
+        }));
+      }
+    }
+
+    async function addItem(zoneId){
+      const name = prompt('Artikel/Bezeichnung:');
+      if (!name) return;
+      const qtyStr = prompt('Menge (Zahl):', '1');
+      const qty = qtyStr ? Number(qtyStr) : null;
+      const unit = prompt('Einheit (z. B. Stk, Paletten, m²):', 'Stk') || null;
+      const notes = prompt('Notizen (optional):') || null;
+      const { error } = await supabase.from('storage_items').insert({ zone_id: zoneId, name, qty, unit, notes });
+      if (error) alert('Speichern fehlgeschlagen: ' + error.message);
+    }
+
+    async function editItem(itemId){
+      const { data, error } = await supabase.from('storage_items').select('*').eq('id', itemId).single();
+      if (error) return alert('Laden fehlgeschlagen: ' + error.message);
+      const name = prompt('Artikel/Bezeichnung:', data.name) ?? data.name;
+      const qtyStr = prompt('Menge (Zahl):', data.qty ?? '') ?? data.qty;
+      const qty = qtyStr !== '' ? Number(qtyStr) : null;
+      const unit = prompt('Einheit:', data.unit ?? '') ?? data.unit;
+      const notes = prompt('Notizen:', data.notes ?? '') ?? data.notes;
+      const { error: uerr } = await supabase.from('storage_items').update({ name, qty, unit, notes }).eq('id', itemId);
+      if (uerr) alert('Update fehlgeschlagen: ' + uerr.message);
+    }
+  </script>
+</body>
+</html>
