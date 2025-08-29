@@ -75,6 +75,7 @@
 
     /* Modale */
     .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:2000; }
+    .modal-backdrop.open{ display:flex; }
     .modal{ background:var(--panel); border:1px solid var(--line); border-radius:.8rem; padding:1rem; width:min(1100px,96vw); max-height:80vh; overflow:auto; }
     .table{ width:100%; border-collapse:collapse; }
     .table th,.table td{ border-bottom:1px solid var(--line); padding:.5rem; text-align:left; font-size:.95rem; }
@@ -277,6 +278,20 @@
 
     const elZonesModal = $('#zones-modal'), elZonesClose = $('#zones-modal-close'), elZonesTableWrap = $('#zones-table-wrap');
 
+    function openModal(m){ m.classList.add('open'); }
+    function closeModal(m){ m.classList.remove('open'); }
+    function setupModal(modal, closeBtn){
+      closeBtn.addEventListener('click', () => closeModal(modal));
+      modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal); });
+    }
+    setupModal(elItemsModal, elItemsClose);
+    setupModal(elZonesModal, elZonesClose);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape'){
+        [elItemsModal, elZonesModal].forEach(m => closeModal(m));
+      }
+    });
+
     // Login Overlay
     const overlay = $('#login-overlay');
     const overlayEmail = $('#overlay-email'), overlayPass = $('#overlay-password');
@@ -343,7 +358,6 @@
       await detectItemsSchema();
       await handlePostLogin();
       await loadZones();
-      await loadProjects();
       await cleanupOrphanProjects();
       await loadProjects();
     })();
@@ -998,8 +1012,7 @@
       }});
     });
 
-    elBtnOverview.addEventListener('click', async ()=>{ await showItemsOverview(); elItemsModal.style.display='flex'; });
-    elItemsClose.addEventListener('click', ()=>{ elItemsModal.style.display='none'; });
+    elBtnOverview.addEventListener('click', async ()=>{ await showItemsOverview(); openModal(elItemsModal); });
 
     async function showItemsOverview(){
       await loadItemCatalog();
@@ -1045,9 +1058,8 @@
 
     // === Zonen-Übersicht
     $('#btn-zones-overview').addEventListener('click', async ()=>{
-      await showZonesOverview(); elZonesModal.style.display='flex';
+      await showZonesOverview(); openModal(elZonesModal);
     });
-    elZonesClose.addEventListener('click', ()=>{ elZonesModal.style.display='none'; });
 
     async function showZonesOverview(){
       elZonesTableWrap.innerHTML = 'Lade…';
@@ -1097,7 +1109,7 @@
           const id = tr.getAttribute('data-id');
           const l = zoneLayerById.get(id);
           if (l){ try{ map.fitBounds(l.getBounds(), { padding:[40,40] }); }catch{} }
-          elZonesModal.style.display='none';
+          closeModal(elZonesModal);
         });
       });
     }
