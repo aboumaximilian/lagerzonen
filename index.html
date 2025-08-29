@@ -302,7 +302,9 @@
     const elZonesModal = $('#zones-modal'), elZonesClose = $('#zones-modal-close'), elZonesTableWrap = $('#zones-table-wrap');
 
     elAccountBtn.addEventListener('click', () => elAccountMenu.classList.toggle('open'));
-    document.addEventListener('click', e => { if (!elSignedIn.contains(e.target)) elAccountMenu.classList.remove('open'); });
+    document.addEventListener('click', e => {
+      if (!e.target.closest('#signed-in')) elAccountMenu.classList.remove('open');
+    });
 
     function openModal(m){ m.classList.add('open'); }
     function closeModal(m){ m.classList.remove('open'); }
