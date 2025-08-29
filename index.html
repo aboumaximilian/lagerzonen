@@ -176,8 +176,9 @@
         <input id="overlay-email" type="email" placeholder="E-Mail" style="flex:1" />
         <input id="overlay-password" type="password" placeholder="Passwort" style="flex:1" />
         <button id="overlay-sign-in">Login</button>
+        <button id="overlay-sign-up">Registrieren</button>
       </div>
-      <div class="hint">Noch kein Konto? E-Mail + Passwort eingeben und oben im Header „Registrieren“ klicken.</div>
+      <div class="hint">Noch kein Konto? E-Mail und Passwort eingeben und „Registrieren“ klicken.</div>
 
       <div id="admin-panel">
         <h4 style="margin:.9rem 0 .4rem 0">Nutzer verwalten</h4>
@@ -253,8 +254,16 @@
     });
     function setDrawingEnabled(on){ if (on) map.addControl(drawControl); else try{ map.removeControl(drawControl);}catch(e){} }
 
-    // === UI-Refs
+      // === Helpers ===
+    if (!window.CSS) window.CSS = {};
+    if (!CSS.escape) {
+      CSS.escape = value => String(value)
+        .replace(/[\0-\x1f\x7f-\x9f\u2000-\u20ff]/g, ch => '\\' + ch.charCodeAt(0).toString(16) + ' ')
+        .replace(/^(-?\d)|^--|[^\w-]/g, ch => '\\' + ch);
+    }
     const $ = s => document.querySelector(s);
+
+    // === UI-Refs
     const elEmail = $('#email'), elPassword = $('#password');
     const elSignIn = $('#sign-in'), elSignUp = $('#sign-up');
     const elSignOut = $('#sign-out'), elSignedIn = $('#signed-in'), elSignedOut = $('#signed-out');
@@ -272,6 +281,7 @@
     const overlay = $('#login-overlay');
     const overlayEmail = $('#overlay-email'), overlayPass = $('#overlay-password');
     $('#overlay-sign-in').addEventListener('click', () => signIn(overlayEmail.value, overlayPass.value));
+    $('#overlay-sign-up').addEventListener('click', () => signUp(overlayEmail.value, overlayPass.value));
 
     // Admin Panel (Whitelist)
     const adminPanel = $('#admin-panel');
@@ -529,8 +539,8 @@
           </div>
         </div>` : '';
 
-      const addBtn = canP ? `<button class="btn-add-project" data-zone="${row.id}" title="Projekt zuordnen">+ Projekt</button>` : '';
-      const addItem = canI ? `<button class="btn-add-item" data-zone="${row.id}" title="Artikel hinzufügen">+ Artikel</button>` : '';
+      const addBtn = canP ? `<button class="btn-add-project" data-zone="${escapeHtml(row.id)}" title="Projekt zuordnen">+ Projekt</button>` : '';
+      const addItem = canI ? `<button class="btn-add-item" data-zone="${escapeHtml(row.id)}" title="Artikel hinzufügen">+ Artikel</button>` : '';
       return `
         <div>
           <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem">
@@ -541,11 +551,11 @@
           <div class="row" style="justify-content:space-between;">
             <div class="hint">Projekte in dieser Zone</div>${addBtn}
           </div>
-          <div id="projects-${row.id}" class="projects" style="margin:.5rem 0"></div>
+          <div id="projects-${escapeHtml(row.id)}" class="projects" style="margin:.5rem 0"></div>
           <div class="row" style="justify-content:space-between;">
             <div class="hint">Artikel in dieser Zone</div>${addItem}
           </div>
-          <div id="items-${row.id}" class="items" style="margin-top:.5rem"></div>
+         <div id="items-${escapeHtml(row.id)}" class="items" style="margin-top:.5rem"></div>
         </div>`;
     }
 
@@ -746,16 +756,16 @@
       });
 
       // Items / Projekte einblenden
-      await populateItems(row.id, el.querySelector('#items-'+row.id));
-      await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id));
+      await populateItems(row.id, el.querySelector('#items-'+CSS.escape(String(row.id))));
+      await populateZoneProjects(row.id, el.querySelector('#projects-'+CSS.escape(String(row.id))));
 
       el.querySelector('.btn-add-item')?.addEventListener('click', async ()=>{
         if(!perms().canAddItems) return alert('Keine Berechtigung.');
-        await addItem(row.id); await populateItems(row.id, el.querySelector('#items-'+row.id));
+        await addItem(row.id); await populateItems(row.id, el.querySelector('#items-'+CSS.escape(String(row.id))));
       });
       el.querySelector('.btn-add-project')?.addEventListener('click', async ()=>{
         if(!perms().canAddProjects) return alert('Keine Berechtigung.');
-        await addProjectToZone(row.id); await populateZoneProjects(row.id, el.querySelector('#projects-'+row.id)); await loadProjects();
+        await addProjectToZone(row.id); await populateZoneProjects(row.id, el.querySelector('#projects-'+CSS.escape(String(row.id)))); await loadProjects();
       });
     });
 
@@ -790,9 +800,9 @@
       container.innerHTML=data.map(it=>{
         const qty=(it.qty??'')!==''?`&times; ${Number(it.qty)} ${it.unit?escapeHtml(it.unit):''}`:'';
         const notes=it.notes?`<div class="hint">${escapeHtml(it.notes)}</div>`:'';
-        const actions=(perms().canAddItems||perms().canDraw)?`<div class="row"><button class="btn-edit-item" data-id="${it.id}">Bearbeiten</button><button class="btn-del-item" data-id="${it.id}">Löschen</button></div>`:'';
+        const actions=(perms().canAddItems||perms().canDraw)?`<div class="row"><button class="btn-edit-item" data-id="${escapeHtml(it.id)}">Bearbeiten</button><button class="btn-del-item" data-id="${escapeHtml(it.id)}">Löschen</button></div>`:'';
         const head=(HAS_ARTICLE_NUMBER && it.article_number)?`<span class="hint" style="border:1px solid #28405e;padding:.05rem .35rem;border-radius:.35rem">${escapeHtml(it.article_number)}</span> `:'';
-        return `<div class="item-row" data-id="${it.id}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
+        return `<div class="item-row" data-id="${escapeHtml(it.id)}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
           <div><div>${head}<strong>${escapeHtml(it.name)}</strong> ${qty}</div>${notes}</div>${actions}</div>`;
       }).join('');
       if(perms().canAddItems||perms().canDraw){
@@ -874,7 +884,7 @@
       const q=(elProjectSearch.value||'').toLowerCase().trim();
       const filtered=!q?allProjects:allProjects.filter(p=>p.name.toLowerCase().includes(q));
       const current=elProjectFilter.value;
-      elProjectFilter.innerHTML='<option value="">Projekt…</option>'+filtered.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+      elProjectFilter.innerHTML='<option value="">Projekt…</option>'+filtered.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
       if(!filtered.some(p=>String(p.id)===String(current))) elProjectFilter.value='';
       else elProjectFilter.value=current;
     }
@@ -889,8 +899,8 @@
       if(r.error) return container.innerHTML='<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
       const data=r.data||[];
       if(!data.length) return container.innerHTML='<span class="hint">Keine Projekte zugeordnet.</span>';
-      container.innerHTML=data.map(zp=>{
-        const removeBtn=perms().canAddProjects?`<button class="btn-remove-project" data-id="${zp.id}">Entfernen</button>`:'';
+      container.innerHTML=data.map(zp=>{␊
+        const removeBtn=perms().canAddProjects?`<button class="btn-remove-project" data-id="${escapeHtml(zp.id)}">Entfernen</button>`:'';
         return `<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">
           <div><strong>${escapeHtml(zp.project?.name??'Projekt')}</strong></div>${removeBtn}
         </div>`;
@@ -1071,8 +1081,8 @@
         <table class="table">
           <thead><tr><th>Zone</th><th>Status</th><th>Projekte</th><th>Artikel (Kurz)</th></tr></thead>
           <tbody>
-            ${rows.map(r=>`
-              <tr class="clickable" data-id="${r.id}">
+            ${rows.map(r=>`␊
+              <tr class="clickable" data-id="${escapeHtml(r.id)}">
                 <td>${escapeHtml(r.name||'')}</td>
                 <td>${escapeHtml(r.status||'')}</td>
                 <td>${r.projs?escapeHtml(r.projs):'<span class="hint">–</span>'}</td>
@@ -1093,3 +1103,4 @@
   </script>
 </body>
 </html>
+
