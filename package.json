@@ -1,0 +1,8 @@
+{
+  "name": "lagerzonen",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "node -e \"console.log('no tests');\""
+  }
+}
