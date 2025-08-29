@@ -1135,8 +1135,8 @@
       elZonesTableWrap.querySelectorAll('tr[data-id]').forEach(tr=>{
         tr.addEventListener('click', ()=>{
           const id = tr.getAttribute('data-id');
-          const l = zoneLayerById.get(id);
-          if (l){ try{ map.fitBounds(l.getBounds(), { padding:[40,40] }); }catch{} }
+          const zone = zoneLayerById.get(id);
+          if (zone){ try{ map.fitBounds(zone.getBounds(), { padding:[40,40] }); }catch{} }
           closeModal(elZonesModal);
         });
       });
