@@ -254,7 +254,7 @@
     });
     function setDrawingEnabled(on){ if (on) map.addControl(drawControl); else try{ map.removeControl(drawControl);}catch(e){} }
 
-      // === Helpers ===
+    // === Helpers ===
     if (!window.CSS) window.CSS = {};
     if (!CSS.escape) {
       CSS.escape = value => String(value)
@@ -395,7 +395,7 @@
       usersBody.querySelectorAll('.del-user').forEach(b => b.addEventListener('click', async () => {
         const email = b.getAttribute('data-email');
         if (!confirm(email + ' entfernen?')) return;
-        const d = await supabase.from('allowed_emails').delete().eq('email', email);
+        const d = await supabase.from('allowed_emails').delete().eq('id', email);
         if (d.error) alert('Entfernen fehlgeschlagen: ' + d.error.message);
         else await loadAllowedUsers();
       }));
@@ -899,10 +899,12 @@
       if(r.error) return container.innerHTML='<span class="hint">Fehler: '+escapeHtml(r.error.message)+'</span>';
       const data=r.data||[];
       if(!data.length) return container.innerHTML='<span class="hint">Keine Projekte zugeordnet.</span>';
-      container.innerHTML=data.map(zp=>{␊
-        const removeBtn=perms().canAddProjects?`<button class="btn-remove-project" data-id="${escapeHtml(zp.id)}">Entfernen</button>`:'';
+      container.innerHTML = data.map(zp => {
+        const removeBtn = perms().canAddProjects
+          ? `<button class="btn-remove-project" data-id="${escapeHtml(zp.id)}">Entfernen</button>`
+          : '';
         return `<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.3rem .5rem;margin:.25rem 0;">
-          <div><strong>${escapeHtml(zp.project?.name??'Projekt')}</strong></div>${removeBtn}
+          <div><strong>${escapeHtml(zp.project?.name ?? 'Projekt')}</strong></div>${removeBtn}
         </div>`;
       }).join('');
       if(perms().canAddProjects){
@@ -1081,7 +1083,7 @@
         <table class="table">
           <thead><tr><th>Zone</th><th>Status</th><th>Projekte</th><th>Artikel (Kurz)</th></tr></thead>
           <tbody>
-            ${rows.map(r=>`␊
+            ${rows.map(r => `
               <tr class="clickable" data-id="${escapeHtml(r.id)}">
                 <td>${escapeHtml(r.name||'')}</td>
                 <td>${escapeHtml(r.status||'')}</td>
@@ -1103,4 +1105,3 @@
   </script>
 </body>
 </html>
-
