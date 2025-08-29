@@ -20,12 +20,12 @@
 
   <style>
     :root{
-      --bg:#0b0f14; --panel:#101620; --text:#e7edf6; --muted:#9bb0c7;
-      --line:#1b2737; --accent:#7cc4ff; --btn:#141c28; --radius:.6rem;
+      --bg:#fdfdfd; --panel:#ffffff; --text:#1a1f2b; --muted:#5f6b7c;
+      --line:#d0d7e2; --accent:#7cc4ff; --btn:#e9edf5; --radius:.6rem;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu;
-      background:var(--bg); color:var(--text); }
+      background:var(--bg); color:var(--text); display:flex; flex-direction:column; min-height:100vh; }
 
     header{
       position:sticky; top:0; z-index:1000; background:var(--panel); border-bottom:1px solid var(--line);
@@ -35,7 +35,7 @@
     .sp{ flex:1 }
     .row{ display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
     input[type=email], input[type=password], input[type=text], select{
-      background:#0f1622; border:1px solid #223146; border-radius:var(--radius);
+      background:#ffffff; border:1px solid var(--line); border-radius:var(--radius);
       color:var(--text); padding:.42rem .5rem; font-size:.9rem;
     }
     input[type=file]{ color:var(--muted); }
@@ -43,13 +43,15 @@
       background:var(--btn); border:1px solid var(--line); color:var(--text);
       border-radius:var(--radius); padding:.38rem .5rem; cursor:pointer; font-size:.9rem;
     }
-    button.ghost{ background:transparent; border-color:#1f2b3d; color:#cfe5ff; }
-    button:hover{ filter:brightness(1.08); }
+    button.ghost{ background:transparent; border-color:var(--line); color:var(--accent); }
+    button:hover{ filter:brightness(.95); }
     button.icon{ width:2.1rem; height:2.1rem; display:inline-grid; place-items:center; padding:0; }
 
-    #map{ height:calc(100vh - 160px); width:100%; }
-    .leaflet-container{ background:#0a0e13; will-change: transform; }
-    .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; will-change: transform; transform: translateZ(0); }
+    #home-view, #map-view{ flex:1; display:flex; flex-direction:column; }
+    #map-view{ display:none; }
+    #map{ flex:1; width:100%; }
+    .leaflet-container{ background:var(--bg); }
+    .leaflet-pane, .leaflet-tile{ backface-visibility:hidden; }
     .leaflet-tile{ image-rendering:-webkit-optimize-contrast; }
 
     .legend{
@@ -75,6 +77,7 @@
 
     /* Modale */
     .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:2000; }
+    .modal-backdrop.open{ display:flex; }
     .modal{ background:var(--panel); border:1px solid var(--line); border-radius:.8rem; padding:1rem; width:min(1100px,96vw); max-height:80vh; overflow:auto; }
     .table{ width:100%; border-collapse:collapse; }
     .table th,.table td{ border-bottom:1px solid var(--line); padding:.5rem; text-align:left; font-size:.95rem; }
@@ -83,67 +86,87 @@
     /* Popup Burgermenü */
     .menu-wrap{ position:relative; }
     .menu-btn{ padding:.3rem .5rem; }
-    .menu{ position:absolute; right:0; top:2rem; background:#0f1622; border:1px solid #223146; border-radius:.6rem; min-width:200px; display:none; z-index:10; }
+    .menu{ position:absolute; right:0; top:2rem; background:var(--panel); border:1px solid var(--line); border-radius:.6rem; min-width:200px; display:none; z-index:10; }
     .menu.open{ display:block; }
-    .menu button{ display:block; width:100%; text-align:left; background:transparent; border:0; padding:.5rem .6rem; }
-    .menu button:hover{ background:#0c121c; }
+    .menu button{ display:block; width:100%; text-align:left; background:transparent; border:0; padding:.5rem .6rem; color:var(--text); }
+    .menu button:hover{ background:var(--btn); }
+
+    @media (max-width:600px){
+      header{ flex-direction:column; align-items:stretch; }
+      header .row{ width:100%; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>📦 Lagerzonen</h1>
+  <div id="home-view">
+    <header>
+      <h1>📦 Lagerverwaltung</h1>
+      <div class="sp"></div>
+      <button id="btn-open-map" class="ghost" title="Kartenansicht">🗺️ Karte</button>
+    </header>
+    <div id="home-zones-wrap" style="padding:1rem">Lade…</div>
+  </div>
 
-    <!-- Projektwahl + Suche -->
-    <div class="row">
-      <select id="project-filter" title="Projekt wählen" style="min-width:200px">
-        <option value="">Projekt…</option>
-      </select>
-      <input id="project-search" type="text" placeholder="Suchen…" style="width:150px" />
-      <button id="project-clear" class="icon ghost" title="Projekt-Filter löschen">✖</button>
+  <div id="map-view">
+    <header>
+      <h1>📦 Lagerzonen</h1>
+      <button id="btn-home-view" class="ghost" title="Verwaltung">🏠</button>
+
+      <!-- Projektwahl + Suche -->
+      <div class="row">
+        <select id="project-filter" title="Projekt wählen" style="min-width:200px">
+          <option value="">Projekt…</option>
+        </select>
+        <input id="project-search" type="text" placeholder="Suchen…" style="width:150px" />
+        <button id="project-clear" class="icon ghost" title="Projekt-Filter löschen">✖</button>
+      </div>
+
+      <div class="sp"></div>
+
+      <div class="row">
+        <label class="row" title="Skizzenmodus (gestrichelt)">
+          <input id="sketch-mode" type="checkbox" /><span class="hint">Skizze</span>
+        </label>
+        <label class="row" title="Karte in Schwarz/Weiß">
+          <input id="bw-toggle" type="checkbox" checked /><span class="hint">S/W Karte</span>
+        </label>
+        <button id="btn-zones-overview" class="ghost" title="Zonen-Übersicht">🗂️</button>
+      </div>
+
+      <div class="sp"></div>
+
+      <div class="row">
+        <button id="btn-items-overview" class="ghost" title="Artikel-Liste">📋</button>
+        <input id="csv-input" type="file" accept=".csv,text/csv" style="display:none" />
+        <button id="btn-upload-csv" class="ghost" title="CSV Artikelstamm hochladen">⬆</button>
+        <button id="refresh" class="ghost" title="Aktualisieren">🔄</button>
+
+        <!-- E-Mail + Passwort -->
+        <span id="signed-out" class="row">
+          <input id="email" type="email" placeholder="E-Mail" style="width:170px" />
+          <input id="password" type="password" placeholder="Passwort" style="width:140px" />
+          <button id="sign-in" class="ghost">Anmelden</button>
+          <button id="sign-up" class="ghost" title="Konto erstellen">Registrieren</button>
+        </span>
+
+        <div id="signed-in" class="menu-wrap" style="display:none">
+          <button id="account-btn" class="menu-btn ghost" title="Konto">☰</button>
+          <div class="menu">
+            <div class="hint" style="padding:.5rem .6rem;border-bottom:1px solid var(--line);">angemeldet: <strong id="user-email">–</strong> <span id="role-badge" class="hint"></span></div>
+            <button id="btn-users" style="display:none">Nutzer verwalten</button>
+            <button id="sign-out">Logout</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div id="map" class="grayscale"></div>
+
+    <div class="legend">
+      <div><span class="dot" style="background:#4caf50"></span> frei</div>
+      <div><span class="dot" style="background:#ff9800"></span> reserviert</div>
+      <div><span class="dot" style="background:#f44336"></span> belegt</div>
     </div>
-
-    <div class="sp"></div>
-
-    <div class="row">
-      <label class="row" title="Skizzenmodus (gestrichelt)">
-        <input id="sketch-mode" type="checkbox" /><span class="hint">Skizze</span>
-      </label>
-      <label class="row" title="Karte in Schwarz/Weiß">
-        <input id="bw-toggle" type="checkbox" checked /><span class="hint">S/W Karte</span>
-      </label>
-      <button id="btn-zones-overview" class="ghost" title="Zonen-Übersicht">🗂️</button>
-    </div>
-
-    <div class="sp"></div>
-
-    <div class="row">
-      <button id="btn-items-overview" class="ghost" title="Artikel-Liste">📋</button>
-      <input id="csv-input" type="file" accept=".csv,text/csv" style="display:none" />
-      <button id="btn-upload-csv" class="ghost" title="CSV Artikelstamm hochladen">⬆</button>
-      <button id="refresh" class="ghost" title="Aktualisieren">🔄</button>
-
-      <!-- E-Mail + Passwort -->
-      <span id="signed-out" class="row">
-        <input id="email" type="email" placeholder="E-Mail" style="width:170px" />
-        <input id="password" type="password" placeholder="Passwort" style="width:140px" />
-        <button id="sign-in" class="ghost">Anmelden</button>
-        <button id="sign-up" class="ghost" title="Konto erstellen">Registrieren</button>
-      </span>
-
-      <span id="signed-in" class="row" style="display:none">
-        <span class="hint">angemeldet: <strong id="user-email">–</strong> <span id="role-badge" class="hint"></span></span>
-        <button id="btn-users" class="ghost" title="Nutzer verwalten (Admin)" style="display:none">👤</button>
-        <button id="sign-out" class="ghost" title="Logout">⎋</button>
-      </span>
-    </div>
-  </header>
-
-  <div id="map" class="grayscale"></div>
-
-  <div class="legend">
-    <div><span class="dot" style="background:#4caf50"></span> frei</div>
-    <div><span class="dot" style="background:#ff9800"></span> reserviert</div>
-    <div><span class="dot" style="background:#f44336"></span> belegt</div>
   </div>
 
   <!-- Artikel-Liste Modal -->
@@ -269,6 +292,7 @@
     const elSignOut = $('#sign-out'), elSignedIn = $('#signed-in'), elSignedOut = $('#signed-out');
     const elUserEmail = $('#user-email'), elRoleBadge = $('#role-badge');
     const elRefresh = $('#refresh'), elBtnUsers = $('#btn-users');
+    const elAccountBtn = $('#account-btn'), elAccountMenu = $('#signed-in .menu');
 
     const elProjectFilter = $('#project-filter'), elProjectSearch = $('#project-search'), elProjectClear = $('#project-clear');
 
@@ -276,6 +300,23 @@
     const elBtnUploadCsv = $('#btn-upload-csv'), elCsvInput = $('#csv-input');
 
     const elZonesModal = $('#zones-modal'), elZonesClose = $('#zones-modal-close'), elZonesTableWrap = $('#zones-table-wrap');
+
+    elAccountBtn.addEventListener('click', () => elAccountMenu.classList.toggle('open'));
+    document.addEventListener('click', e => { if (!elSignedIn.contains(e.target)) elAccountMenu.classList.remove('open'); });
+
+    function openModal(m){ m.classList.add('open'); }
+    function closeModal(m){ m.classList.remove('open'); }
+    function setupModal(modal, closeBtn){
+      closeBtn.addEventListener('click', () => closeModal(modal));
+      modal.addEventListener('click', e => { if (e.target === modal) closeModal(modal); });
+    }
+    setupModal(elItemsModal, elItemsClose);
+    setupModal(elZonesModal, elZonesClose);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape'){
+        [elItemsModal, elZonesModal].forEach(m => closeModal(m));
+      }
+    });
 
     // Login Overlay
     const overlay = $('#login-overlay');
@@ -343,7 +384,6 @@
       await detectItemsSchema();
       await handlePostLogin();
       await loadZones();
-      await loadProjects();
       await cleanupOrphanProjects();
       await loadProjects();
     })();
@@ -547,7 +587,7 @@
             <div><strong>${escapeHtml(row.name||'Zone')}</strong><div class="hint">Erstellt: ${new Date(row.created_at).toLocaleString()}</div></div>
             ${menu}
           </div>
-          <hr style="border-color:#1b2737">
+          <hr style="border-color:var(--line)">
           <div class="row" style="justify-content:space-between;">
             <div class="hint">Projekte in dieser Zone</div>${addBtn}
           </div>
@@ -801,7 +841,7 @@
         const qty=(it.qty??'')!==''?`&times; ${Number(it.qty)} ${it.unit?escapeHtml(it.unit):''}`:'';
         const notes=it.notes?`<div class="hint">${escapeHtml(it.notes)}</div>`:'';
         const actions=(perms().canAddItems||perms().canDraw)?`<div class="row"><button class="btn-edit-item" data-id="${escapeHtml(it.id)}">Bearbeiten</button><button class="btn-del-item" data-id="${escapeHtml(it.id)}">Löschen</button></div>`:'';
-        const head=(HAS_ARTICLE_NUMBER && it.article_number)?`<span class="hint" style="border:1px solid #28405e;padding:.05rem .35rem;border-radius:.35rem">${escapeHtml(it.article_number)}</span> `:'';
+        const head=(HAS_ARTICLE_NUMBER && it.article_number)?`<span class="hint" style="border:1px solid var(--accent);color:var(--accent);padding:.05rem .35rem;border-radius:.35rem">${escapeHtml(it.article_number)}</span> `:'';
         return `<div class="item-row" data-id="${escapeHtml(it.id)}" style="display:flex;gap:.5rem;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:.5rem;padding:.4rem .6rem;margin:.25rem 0;">
           <div><div>${head}<strong>${escapeHtml(it.name)}</strong> ${qty}</div>${notes}</div>${actions}</div>`;
       }).join('');
@@ -998,8 +1038,7 @@
       }});
     });
 
-    elBtnOverview.addEventListener('click', async ()=>{ await showItemsOverview(); elItemsModal.style.display='flex'; });
-    elItemsClose.addEventListener('click', ()=>{ elItemsModal.style.display='none'; });
+    elBtnOverview.addEventListener('click', async ()=>{ await showItemsOverview(); openModal(elItemsModal); });
 
     async function showItemsOverview(){
       await loadItemCatalog();
@@ -1045,9 +1084,8 @@
 
     // === Zonen-Übersicht
     $('#btn-zones-overview').addEventListener('click', async ()=>{
-      await showZonesOverview(); elZonesModal.style.display='flex';
+      await showZonesOverview(); openModal(elZonesModal);
     });
-    elZonesClose.addEventListener('click', ()=>{ elZonesModal.style.display='none'; });
 
     async function showZonesOverview(){
       elZonesTableWrap.innerHTML = 'Lade…';
@@ -1097,11 +1135,86 @@
           const id = tr.getAttribute('data-id');
           const l = zoneLayerById.get(id);
           if (l){ try{ map.fitBounds(l.getBounds(), { padding:[40,40] }); }catch{} }
-          elZonesModal.style.display='none';
+          closeModal(elZonesModal);
         });
       });
     }
 
+    // === Home View ===
+    const homeView = document.getElementById('home-view');
+    const mapView = document.getElementById('map-view');
+    const homeZonesWrap = document.getElementById('home-zones-wrap');
+
+    async function loadHomeZones(){
+      homeZonesWrap.innerHTML = 'Lade…';
+      const zr = await supabase.from('storage_zones').select('id,name,status');
+      if (zr.error){ homeZonesWrap.innerHTML = 'Fehler: '+escapeHtml(zr.error.message); return; }
+      const pr = await supabase.from('zone_projects').select('zone_id, project:projects(name)');
+      const projectsByZone = new Map();
+      if (!pr.error) (pr.data||[]).forEach(x=>{ const arr = projectsByZone.get(x.zone_id)||[]; arr.push(x.project?.name||'Projekt'); projectsByZone.set(x.zone_id, arr); });
+      const ir = await selectAllItems();
+      const itemsByZone = new Map();
+      if (!ir.error) (ir.data||[]).forEach(it=>{ const arr = itemsByZone.get(it.zone_id)||[]; arr.push(it); itemsByZone.set(it.zone_id, arr); });
+
+      const rows = (zr.data||[]).map(z=>{
+        const projs = (projectsByZone.get(z.id)||[]).join(', ');
+        const items = (itemsByZone.get(z.id)||[]);
+        const shortItems = items.slice(0,3).map(it=>{
+          const q = (it.qty??'')!==''?`×${Number(it.qty)}`:'';
+          return (it.name||'ohne Name') + (q?` ${q}`:'');
+        }).join(' · ');
+        const more = items.length>3 ? ` +${items.length-3} weitere` : '';
+        return { id:z.id, name:z.name, status:z.status, projs, itemsText: shortItems + more };
+      });
+
+      homeZonesWrap.innerHTML = `
+        <table class="table">
+          <thead><tr><th>Zone</th><th>Status</th><th>Projekte</th><th>Artikel (Kurz)</th><th></th></tr></thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr>
+                <td>${escapeHtml(r.name||'')}</td>
+                <td>${escapeHtml(r.status||'')}</td>
+                <td>${r.projs?escapeHtml(r.projs):'<span class="hint">–</span>'}</td>
+                <td>${r.itemsText?escapeHtml(r.itemsText):'<span class="hint">–</span>'}</td>
+                <td class="row">
+                  <button class="btn-add-item" data-zone="${escapeHtml(r.id)}">+ Artikel</button>
+                  <button class="btn-add-project" data-zone="${escapeHtml(r.id)}">+ Projekt</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+
+      homeZonesWrap.querySelectorAll('.btn-add-item').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          if(!perms().canAddItems) return alert('Keine Berechtigung.');
+          await addItem(btn.getAttribute('data-zone'));
+          await loadHomeZones();
+        });
+      });
+      homeZonesWrap.querySelectorAll('.btn-add-project').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          if(!perms().canAddProjects) return alert('Keine Berechtigung.');
+          await addProjectToZone(btn.getAttribute('data-zone'));
+          await loadHomeZones();
+          await loadProjects();
+        });
+      });
+    }
+
+    function showHome(){
+      mapView.style.display='none';
+      homeView.style.display='flex';
+      loadHomeZones();
+    }
+    function showMap(){
+      homeView.style.display='none';
+      mapView.style.display='flex';
+      invalidate();
+    }
+    document.getElementById('btn-open-map').addEventListener('click', showMap);
+    document.getElementById('btn-home-view').addEventListener('click', showHome);
+    showHome();
   </script>
 </body>
 </html>
